@@ -4,3 +4,8 @@ uvicorn[standard]>=0.30.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
 beautifulsoup4>=4.12.0
+
+# LangChain integration (used by /api/chat/langchain endpoint)
+langchain>=0.3.0
+langchain-anthropic>=0.3.0
+langchain-core>=0.3.0
