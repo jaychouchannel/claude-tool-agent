@@ -137,6 +137,7 @@
   <header>
     <h1>Claude Tool-Use Agent</h1>
     <div class="actions">
+      <button id="endpoint-toggle" title="切换后端实现">🔄 Native</button>
       <button id="settings-btn" title="API Key">⚙ API Key</button>
       <button id="clear-btn">清空</button>
     </div>
@@ -149,7 +150,7 @@
       <textarea id="input" rows="1" placeholder="问点啥…（Enter 发送，Shift+Enter 换行）"></textarea>
       <button id="send" class="primary">发送</button>
     </div>
-    <footer>Powered by Anthropic Claude · 工具：联网搜索 + Python 代码</footer>
+    <footer>Powered by Anthropic Claude · 工具：联网搜索 + Python 代码 + Wikipedia + 文件读取 · 双后端：Native 与 LangChain</footer>
   </div>
 </div>
 
@@ -173,8 +174,23 @@ const sendBtn = $("#send");
 
 let busy = false;
 let history = []; // [{role, content}]
+let endpoint = localStorage.getItem("agent_endpoint") || "native"; // native | langchain
 
 // ---------- Settings ----------
+const endpointBtn = $("#endpoint-toggle");
+function refreshEndpointLabel() {
+  endpointBtn.textContent = endpoint === "langchain" ? "🔄 LangChain" : "🔄 Native";
+  endpointBtn.title = endpoint === "langchain"
+    ? "当前：LangChain 后端 (POST /api/chat/langchain) — 点击切回 native"
+    : "当前：Native 后端 (POST /api/chat) — 点击切到 LangChain";
+}
+refreshEndpointLabel();
+endpointBtn.addEventListener("click", () => {
+  endpoint = endpoint === "langchain" ? "native" : "langchain";
+  localStorage.setItem("agent_endpoint", endpoint);
+  refreshEndpointLabel();
+});
+
 $("#settings-btn").addEventListener("click", () => {
   $("#api-key-input").value = localStorage.getItem("anthropic_api_key") || "";
   $("#settings-modal").style.display = "flex";
@@ -299,7 +315,7 @@ async function send() {
   let firstChunk = true;
 
   try {
-    const resp = await fetch("/api/chat", {
+      const resp = await fetch(endpoint === "langchain" ? "/api/chat/langchain" : "/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

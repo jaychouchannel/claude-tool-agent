@@ -47,8 +47,11 @@ No env key? Click the gear icon in the top-right corner and paste your key into 
 |---|---|
 | **Web Search** 🔍 | DuckDuckGo HTML scraping — no API key or registration needed. Returns top results with titles, snippets, and links. |
 | **Python Code Execution** 🐍 | Runs arbitrary Python snippets via `subprocess` with a 10‑second timeout and 5 KB output truncation. |
+| **Wikipedia Lookup** 📚 | Fetches the best-matching Wikipedia page summary via the public REST API — great for encyclopedic facts, biographies, geography. |
+| **File Read** 📄 | Reads text files inside the project root (sandboxed — paths outside the project are rejected; binary extensions are blocked). |
 | **Multi‑Turn Tool Loop** 🔄 | Claude decides whether to call one tool, multiple tools, or chain tools across multiple rounds — all within a single conversation. |
 | **SSE Real‑Time Streaming** ⚡ | Every text token, tool call, and tool result streams to the browser as it happens via Server‑Sent Events. |
+| **LangChain Endpoint** 🔌 | An alternative `/api/chat/langchain` route runs the same tools through `langchain-anthropic`'s `create_react_agent` — compare two implementations of the same agent with one click. |
 | **Bring‑Your‑Own‑Key** 🔑 | Input your API key in the UI (saved to `localStorage`) or configure it server‑side via environment variable. |
 | **Model Switch** 🧠 | Defaults to `claude-haiku-4-5-20251001` (fast & cheap). Override with `ANTHROPIC_MODEL=claude-sonnet-5` or `claude-opus-4-8`. |
 
@@ -117,15 +120,31 @@ No env key? Click the gear icon in the top-right corner and paste your key into 
 │   ├── __init__.py
 │   ├── main.py                        # FastAPI application & SSE routes
 │   ├── agent.py                       # Agentic loop (Claude + tool orchestration)
+│   ├── langchain_agent.py             # LangChain alternative agent (create_react_agent)
 │   ├── config.py                      # Environment variable loading & model selection
 │   └── tools/
 │       ├── __init__.py
 │       ├── registry.py                # Tool registry: name → run function, Anthropic tool specs
 │       ├── search.py                  # web_search tool (DuckDuckGo HTML scraping)
-│       └── code_runner.py             # run_python_code tool (subprocess execution)
+│       ├── code_runner.py             # run_python_code tool (subprocess execution)
+│       ├── wikipedia.py               # wikipedia_search tool (Wikipedia REST API summary)
+│       └── file_read.py               # file_read tool (sandboxed text-file reader)
 └── static/
     └── index.html                     # Single‑page chat frontend (HTML + CSS + JS)
 ```
+
+---
+
+## LangChain vs Native Agent
+
+Two endpoints expose the same tool suite, letting you compare approaches side-by-side:
+
+| Endpoint | Backend | When to use |
+|---|---|---|
+| `POST /api/chat` | `app/agent.py` — hand-rolled tool loop over the raw Anthropic SDK | Zero extra dependencies; tight control over the loop; best for learning the bare tool-use API |
+| `POST /api/chat/langchain` | `app/langchain_agent.py` — `langchain-anthropic`'s `create_react_agent` | Compare idioms; reuse LangChain ecosystem (loaders, memory, chains); useful when planning to swap in other LangChain-compatible tools |
+
+Both produce the same SSE event stream (`text`, `tool_use`, `tool_result`, `error`, `done`) — the frontend doesn't need to know which backend is in use.
 
 ---
 
@@ -135,6 +154,8 @@ Click the examples below to see the agent orchestrate tools in real time:
 
 > - *"Search for the latest Anthropic model releases"* → triggers `web_search`
 > - *"Calculate 2 to the power of 100"* → triggers `run_python_code`
+> - *"What is the population of Tokyo?"* → triggers `wikipedia_search`
+> - *"Read app/config.py and explain how model selection works"* → triggers `file_read`
 > - *"Search for today's BTC price and convert it to CNY"* → triggers `web_search` → `run_python_code` in a chain
 
 ---
