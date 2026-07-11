@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Claude Tool-Use Agent</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <style>
   :root {
     --bg: #f7f7f8;
@@ -70,6 +71,20 @@
   }
   .bubble code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
   .user .bubble code { background: rgba(255,255,255,0.2); }
+  /* full markdown styles inside bubbles */
+  .bubble p { margin: 6px 0; }
+  .bubble ul, .bubble ol { margin: 6px 0; padding-left: 24px; }
+  .bubble li { margin: 2px 0; }
+  .bubble h1, .bubble h2, .bubble h3 { margin: 10px 0 6px; font-size: 16px; font-weight: 600; }
+  .bubble h1 { font-size: 18px; }
+  .bubble h2 { font-size: 17px; }
+  .bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  .bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  .bubble th { background: var(--assistant-bg); font-weight: 600; }
+  .bubble blockquote { border-left: 3px solid var(--border); margin: 6px 0; padding: 2px 12px; color: var(--muted); }
+  .bubble a { color: var(--accent); text-decoration: none; }
+  .bubble a:hover { text-decoration: underline; }
+  .bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 
   .tool-call {
     margin: 8px 0 8px 80px; padding: 8px 12px; border-radius: 8px;
@@ -89,6 +104,39 @@
     font-weight: 600; font-size: 12px; color: var(--muted);
   }
   .tool-call .name { color: #b8860b; }
+
+  /* copy button on code blocks */
+  .code-block-wrap { position: relative; margin: 8px 0 0; }
+  .code-block-wrap pre {
+    margin: 0; background: var(--code-bg); color: var(--code-text);
+    padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 13px;
+  }
+  .copy-btn {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.1); color: #d4d4d4;
+    border: 1px solid rgba(255,255,255,0.2); cursor: pointer;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .code-block-wrap:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { background: rgba(255,255,255,0.2); }
+  .copy-btn.copied { background: var(--accent); border-color: var(--accent); opacity: 1; }
+  .tool-result .copy-btn { background: white; color: var(--text); border-color: var(--border); opacity: 0.6; }
+  .tool-result .copy-btn:hover { background: #f0f0f1; }
+  .tool-result .copy-btn.copied { opacity: 1; }
+
+  /* toast */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: white; padding: 8px 16px;
+    border-radius: 6px; font-size: 13px; z-index: 200;
+    animation: toast-fade 1.6s ease forwards;
+  }
+  @keyframes toast-fade {
+    0% { opacity: 0; transform: translate(-50%, 10px); }
+    15%, 85% { opacity: 1; transform: translate(-50%, 0); }
+    100% { opacity: 0; transform: translate(-50%, -10px); }
+  }
 
   .error-msg {
     margin: 8px 80px; padding: 10px 14px; border-radius: 8px;
@@ -137,6 +185,7 @@
   <header>
     <h1>Claude Tool-Use Agent</h1>
     <div class="actions">
+      <button id="stop-btn" title="中断当前生成" style="display:none;">⏹ 停止</button>
       <button id="endpoint-toggle" title="切换后端实现">🔄 Native</button>
       <button id="settings-btn" title="API Key">⚙ API Key</button>
       <button id="clear-btn">清空</button>
@@ -210,6 +259,7 @@ $("#clear-btn").addEventListener("click", () => {
   if (!confirm("清空对话历史？")) return;
   history = [];
   messagesEl.innerHTML = "";
+  try { localStorage.removeItem(HISTORY_KEY); } catch {}
 });
 
 // ---------- Input ----------
@@ -228,12 +278,18 @@ sendBtn.addEventListener("click", send);
 // ---------- Render ----------
 function escapeHtml(s) {
   return String(s)
-    .replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">")
-    .replace(/"/g, """).replace(/'/g, "&#39;");
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderMarkdown(text) {
-  // very small markdown: code fences and inline code only
+  if (typeof marked !== "undefined") {
+    return marked.parse(text, { breaks: true, gfm: true });
+  }
+  // fallback: code fences + inline code only
   const parts = [];
   const re = /```(\w+)?\n([\s\S]*?)```/g;
   let last = 0, m;
@@ -244,8 +300,7 @@ function renderMarkdown(text) {
   }
   if (last < text.length) parts.push({ t: "text", v: text.slice(last) });
   return parts.map(p => {
-    if (p.t === "code") return `<pre><code>${escapeHtml(p.v)}</code></pre>`;
-    // inline code
+    if (p.t === "code") return `<pre><code class="lang-${escapeHtml(p.lang)}">${escapeHtml(p.v)}</code></pre>`;
     return escapeHtml(p.v).replace(/`([^`]+)`/g, "<code>$1</code>");
   }).join("");
 }
@@ -256,6 +311,7 @@ function addMessage(role, contentHtml) {
   div.innerHTML = `<div class="msg-role">${role === "user" ? "你" : "Claude"}</div>
     <div class="bubble">${contentHtml}</div>`;
   messagesEl.appendChild(div);
+  decorateCodeBlocks(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
 }
@@ -264,8 +320,8 @@ function addToolCard(name, input) {
   const div = document.createElement("div");
   div.className = "tool-call";
   const inputStr = typeof input === "string" ? input : JSON.stringify(input, null, 2);
-  div.innerHTML = `<div class="label">🔧 工具调用 <span class="name">${escapeHtml(name)}</span></div>
-    <pre>${escapeHtml(inputStr)}</pre>`;
+  div.innerHTML = `<div class="label">🔧 工具调用 <span class="name">${escapeHtml(name)}</span></div>`
+    + wrapCodeBlock(inputStr);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
@@ -274,11 +330,65 @@ function addToolCard(name, input) {
 function addResultCard(name, output) {
   const div = document.createElement("div");
   div.className = "tool-result";
-  div.innerHTML = `<div class="label">📥 <span class="name">${escapeHtml(name)}</span> 返回</div>
-    <pre>${escapeHtml(output)}</pre>`;
+  div.innerHTML = `<div class="label">📥 <span class="name">${escapeHtml(name)}</span> 返回</div>`
+    + wrapCodeBlock(output);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
+
+// Wrap a raw text blob in a code-block container with a copy button.
+function wrapCodeBlock(text) {
+  return `<div class="code-block-wrap"><pre>${escapeHtml(text)}</pre>`
+    + `<button class="copy-btn" type="button">复制</button></div>`;
+}
+
+// For tool calls and results we already have wrapCodeBlock. Assistant bubbles
+// render code fences via marked (raw <pre><code>). Find those and attach copy buttons.
+function decorateCodeBlocks(node) {
+  const blocks = node.querySelectorAll("pre");
+  blocks.forEach(pre => {
+    if (pre.parentElement && pre.parentElement.classList.contains("code-block-wrap")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "code-block-wrap";
+    const btn = document.createElement("button");
+    btn.className = "copy-btn";
+    btn.type = "button";
+    btn.textContent = "复制";
+    pre.replaceWith(wrap);
+    wrap.appendChild(pre);
+    wrap.appendChild(btn);
+  });
+}
+
+function showToast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 1700);
+}
+
+// Wire copy buttons via event delegation — handles DOM inserts without re-binding.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".copy-btn");
+  if (!btn) return;
+  const wrap = btn.closest(".code-block-wrap");
+  const pre = wrap && wrap.querySelector("pre");
+  if (!pre) return;
+  const text = pre.innerText || pre.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.classList.add("copied");
+    btn.textContent = "已复制";
+    showToast("已复制到剪贴板");
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.textContent = "复制";
+    }, 1400);
+  }).catch(() => {
+    btn.textContent = "失败";
+    setTimeout(() => { btn.textContent = "复制"; }, 1400);
+  });
+});
 
 function addError(message) {
   const div = document.createElement("div");
@@ -289,10 +399,38 @@ function addError(message) {
 }
 
 // ---------- Send + SSE ----------
+let currentAbort = null;
+const stopBtn = $("#stop-btn");
+
 function setBusy(b) {
   busy = b;
   sendBtn.disabled = b;
   inputEl.disabled = b;
+  stopBtn.style.display = b ? "" : "none";
+}
+
+stopBtn.addEventListener("click", () => {
+  if (currentAbort) currentAbort.abort();
+});
+
+const HISTORY_KEY = "agent_history_v1";
+
+function saveHistory() {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return;
+    history = arr;
+    for (const m of history) {
+      const div = addMessage(m.role, m.role === "user" ? escapeHtml(m.content) : renderMarkdown(m.content));
+      if (m.role === "assistant") decorateCodeBlocks(div.querySelector(".bubble"));
+    }
+  } catch {}
 }
 
 async function send() {
@@ -303,6 +441,7 @@ async function send() {
 
   addMessage("user", escapeHtml(text));
   history.push({ role: "user", content: text });
+  saveHistory();
 
   const assistantDiv = addMessage("assistant", '<span class="typing">思考中…</span>');
   const bubble = assistantDiv.querySelector(".bubble");
@@ -310,9 +449,11 @@ async function send() {
   let apiKey = localStorage.getItem("anthropic_api_key") || "";
 
   setBusy(true);
+  currentAbort = new AbortController();
 
   let fullText = "";
   let firstChunk = true;
+  let aborted = false;
 
   try {
       const resp = await fetch(endpoint === "langchain" ? "/api/chat/langchain" : "/api/chat", {
@@ -323,6 +464,7 @@ async function send() {
         api_key: apiKey,
         history: history.slice(0, -1), // exclude current (server adds it)
       }),
+      signal: currentAbort.signal,
     });
 
     if (!resp.ok) {
@@ -330,6 +472,7 @@ async function send() {
       bubble.innerHTML = "";
       addError(err.error || `HTTP ${resp.status}`);
       setBusy(false);
+      currentAbort = null;
       return;
     }
 
@@ -358,8 +501,9 @@ async function send() {
         if (evt.event === "text") {
           fullText += evt.data.text;
           bubble.innerHTML = renderMarkdown(fullText);
+          decorateCodeBlocks(bubble);
         } else if (evt.event === "tool_use") {
-          if (!firstChunk) bubble.innerHTML = renderMarkdown(fullText);
+          if (!firstChunk) { bubble.innerHTML = renderMarkdown(fullText); decorateCodeBlocks(bubble); }
           addToolCard(evt.data.name, evt.data.input);
         } else if (evt.event === "tool_result") {
           addResultCard(evt.data.name, evt.data.output);
@@ -374,15 +518,26 @@ async function send() {
 
     if (fullText) {
       history.push({ role: "assistant", content: fullText });
+      saveHistory();
     }
   } catch (e) {
-    bubble.innerHTML = "";
-    addError("网络错误: " + e.message);
+    aborted = (e.name === "AbortError");
+    if (aborted) {
+      bubble.innerHTML = fullText ? renderMarkdown(fullText) : '<span class="typing">(已停止)</span>';
+      if (fullText) decorateCodeBlocks(bubble);
+      if (fullText) { history.push({ role: "assistant", content: fullText }); saveHistory(); }
+    } else {
+      bubble.innerHTML = "";
+      addError("网络错误: " + e.message);
+    }
   } finally {
-    if (firstChunk) bubble.innerHTML = '<span class="typing">(无回复)</span>';
+    if (firstChunk && !aborted) bubble.innerHTML = '<span class="typing">(无回复)</span>';
+    currentAbort = null;
     setBusy(false);
   }
 }
+
+loadHistory();
 
 function parseSse(raw) {
   const lines = raw.split("\n");
