@@ -21,14 +21,14 @@ from .tools import REGISTRY, get_tool_specs
 # while `/api/chat` stays untouched.
 try:
     from langchain_anthropic import ChatAnthropic
-    from langchain.agents import create_react_agent, AgentExecutor
+    from langgraph.prebuilt import create_react_agent
     from langchain_core.tools import StructuredTool
     from langchain_core.messages import HumanMessage, AIMessage
     from pydantic import BaseModel, ValidationError
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         "LangChain dependencies are not installed. "
-        "Run `pip install langchain langchain-anthropic` to enable /api/chat/langchain."
+        "Run `pip install langchain langchain-anthropic langgraph` to enable /api/chat/langchain."
     ) from e
 
 
