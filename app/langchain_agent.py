@@ -23,7 +23,7 @@ try:
     from langchain_anthropic import ChatAnthropic
     from langgraph.prebuilt import create_react_agent
     from langchain_core.tools import StructuredTool
-    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
     from pydantic import BaseModel, ValidationError
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -45,16 +45,22 @@ def _spec_to_pydantic(spec: dict[str, Any]) -> type[BaseModel]:
     LangChain's `StructuredTool` expects a Pydantic class; Anthropic's tool spec
     uses raw JSON-schema dicts. We translate field-by-field for the simple shapes
     this project's tools actually use (string / integer / boolean / number).
+
+    Pydantic v2 requires real type annotations on the class namespace — building
+    fields as `(type, default)` tuples via `type(...)` doesn't work. We build a
+    proper `__annotations__` mapping and use `Field(...)` for required fields.
     """
+    from pydantic import Field
+
     props = spec.get("input_schema", {}).get("properties", {})
     required = set(spec.get("input_schema", {}).get("required", []))
 
-    fields: dict[str, Any] = {}
+    annotations: dict[str, type] = {}
+    namespace: dict[str, Any] = {"__annotations__": annotations}
     for name, schema in props.items():
-        py_type: type
         json_type = schema.get("type", "string")
         if json_type == "integer":
-            py_type = int
+            py_type: type = int
         elif json_type == "number":
             py_type = float
         elif json_type == "boolean":
@@ -63,13 +69,14 @@ def _spec_to_pydantic(spec: dict[str, Any]) -> type[BaseModel]:
             py_type = str
 
         description = schema.get("description", "")
+        annotations[name] = py_type
         if name in required:
-            fields[name] = (py_type, ...)
+            namespace[name] = Field(..., description=description)
         else:
             default = schema.get("default")
-            fields[name] = (py_type, default)
+            namespace[name] = Field(default, description=description)
 
-    return type(f"{spec['name']}_Args", (BaseModel,), fields)
+    return type(f"{spec['name']}_Args", (BaseModel,), namespace)
 
 
 def _build_tools() -> list[StructuredTool]:
@@ -119,32 +126,31 @@ def chat(
     tools = _build_tools()
 
     try:
-        agent = create_react_agent(model, tools)
-        executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            max_iterations=MAX_ITERATIONS,
-            return_intermediate_steps=True,
-            handle_parsing_errors=True,
-        )
+        agent = create_react_agent(model, tools, prompt=SYSTEM_PROMPT)
     except Exception as e:
         yield ("error", f"Failed to build LangChain agent: {e}")
         yield ("done", None)
         return
 
     # Translate our {role, content} history into LangChain's message types.
+    # The ReAct agent graph takes its prior turns as the `messages` state key.
     lc_messages: list[Any] = []
     for turn in messages:
         role = turn.get("role")
         content = turn.get("content", "")
+        if isinstance(content, list):
+            # Anthropic-style content blocks (text / tool_use / tool_result).
+            # The native endpoint stores raw blocks sometimes; collapse to text
+            # since the LangChain ReAct graph doesn't replay tool history here.
+            content = json.dumps(content, default=str)
         if role == "user":
-            lc_messages.append(HumanMessage(content=content if isinstance(content, str) else json.dumps(content)))
+            lc_messages.append(HumanMessage(content=content))
         elif role == "assistant":
-            lc_messages.append(AIMessage(content=content if isinstance(content, str) else json.dumps(content)))
+            lc_messages.append(AIMessage(content=content))
 
     try:
-        result = executor.invoke(
-            {"input": lc_messages[-1].content if lc_messages else ""},
+        result = agent.invoke(
+            {"messages": lc_messages},
             config={"recursion_limit": MAX_ITERATIONS * 4},
         )
     except Exception as e:
@@ -152,24 +158,34 @@ def chat(
         yield ("done", None)
         return
 
-    # Re-emit intermediate steps as tool_use / tool_result events so the UI
-    # renders the same cards as the native endpoint.
-    for action, observation in result.get("intermediate_steps", []):
-        tool_name = getattr(action, "tool", str(action))
-        tool_input = getattr(tool_action_input := getattr(action, "tool_input", None), "model_dump", lambda: tool_action_input)()
-        if callable(tool_input):
-            tool_input = tool_input()
-        yield ("tool_use", {"id": getattr(action, "tool_call_id", ""), "name": tool_name, "input": tool_input})
-        yield ("tool_result", {
-            "id": getattr(action, "tool_call_id", ""),
-            "name": tool_name,
-            "output": str(observation),
-        })
+    # `create_react_agent` returns state with a `messages` list mixing
+    # AIMessage (text + tool_calls), ToolMessage (tool outputs), and a final
+    # AIMessage with the assistant's summary. Walk that list in order and emit
+    # tool_use / tool_result events as the UI expects, then the trailing text.
+    final_text = ""
+    for msg in result.get("messages", []):
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        if tool_calls:
+            for call in tool_calls:
+                yield ("tool_use", {
+                    "id": call.get("id", "") if isinstance(call, dict) else getattr(call, "id", ""),
+                    "name": call.get("name", "") if isinstance(call, dict) else getattr(call, "name", ""),
+                    "input": call.get("args", {}) if isinstance(call, dict) else getattr(call, "args", {}),
+                })
+        # ToolMessage carries the tool's output.
+        if getattr(msg, "type", None) == "tool" or "ToolMessage" in type(msg).__name__:
+            yield ("tool_result", {
+                "id": getattr(msg, "tool_call_id", ""),
+                "name": getattr(msg, "name", "") or getattr(msg, "tool_name", ""),
+                "output": str(getattr(msg, "content", "")),
+            })
+        # Trailing AIMessage text becomes the SSE `text` event.
+        if isinstance(msg, AIMessage) and not tool_calls:
+            content_str = msg.content if isinstance(msg.content, str) else json.dumps(msg.content, default=str)
+            if content_str:
+                final_text = content_str
 
-    output = result.get("output", "")
-    if isinstance(output, str) and output:
-        yield ("text", output)
-    elif not isinstance(output, str):
-        yield ("text", json.dumps(output, default=str))
+    if final_text:
+        yield ("text", final_text)
 
     yield ("done", None)
