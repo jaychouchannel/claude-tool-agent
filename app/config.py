@@ -1,6 +1,5 @@
 """Configuration: load .env, expose settings."""
 import os
-from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -14,9 +13,6 @@ def get_default_api_key() -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY")
 
 
-def get_model() -> str:
+def get_default_model() -> str:
     """Default Claude model. Override with ANTHROPIC_MODEL env var."""
     return os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-
-
-MAX_ITERATIONS = 10
