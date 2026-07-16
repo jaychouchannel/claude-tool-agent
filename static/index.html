@@ -1,558 +1,110 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Claude Tool-Use Agent</title>
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<style>
-  :root {
-    --bg: #f7f7f8;
-    --panel: #ffffff;
-    --border: #e5e5e7;
-    --text: #1d1d1f;
-    --muted: #86868b;
-    --accent: #10a37f;
-    --accent-hover: #0e8e6f;
-    --assistant-bg: #f0f0f1;
-    --tool-bg: #fff8e6;
-    --tool-border: #f0d97a;
-    --result-bg: #eef7ff;
-    --result-border: #b5d8f7;
-    --error-bg: #fdeded;
-    --error-border: #f5c2c2;
-    --code-bg: #1e1e1e;
-    --code-text: #d4d4d4;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100%; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    font-size: 15px;
-    line-height: 1.55;
-  }
-  #app { display: flex; flex-direction: column; height: 100vh; }
-
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 20px; background: var(--panel);
-    border-bottom: 1px solid var(--border);
-  }
-  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
-  header .actions { display: flex; gap: 8px; }
-  button {
-    font: inherit; cursor: pointer; border: 1px solid var(--border);
-    background: var(--panel); color: var(--text); padding: 6px 12px;
-    border-radius: 6px;
-  }
-  button:hover { background: #f0f0f1; }
-  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
-  button.primary:hover { background: var(--accent-hover); }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  #messages {
-    flex: 1; overflow-y: auto; padding: 20px; max-width: 820px;
-    width: 100%; margin: 0 auto;
-  }
-  .msg { margin-bottom: 16px; }
-  .msg-role { font-size: 12px; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
-  .bubble {
-    padding: 10px 14px; border-radius: 10px; white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-  .user .bubble { background: var(--accent); color: white; margin-left: 80px; }
-  .assistant .bubble { background: var(--assistant-bg); margin-right: 80px; }
-  .bubble pre {
-    background: var(--code-bg); color: var(--code-text); padding: 10px;
-    border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 8px 0 0;
-  }
-  .bubble code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
-  .user .bubble code { background: rgba(255,255,255,0.2); }
-  /* full markdown styles inside bubbles */
-  .bubble p { margin: 6px 0; }
-  .bubble ul, .bubble ol { margin: 6px 0; padding-left: 24px; }
-  .bubble li { margin: 2px 0; }
-  .bubble h1, .bubble h2, .bubble h3 { margin: 10px 0 6px; font-size: 16px; font-weight: 600; }
-  .bubble h1 { font-size: 18px; }
-  .bubble h2 { font-size: 17px; }
-  .bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
-  .bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
-  .bubble th { background: var(--assistant-bg); font-weight: 600; }
-  .bubble blockquote { border-left: 3px solid var(--border); margin: 6px 0; padding: 2px 12px; color: var(--muted); }
-  .bubble a { color: var(--accent); text-decoration: none; }
-  .bubble a:hover { text-decoration: underline; }
-  .bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
-
-  .tool-call {
-    margin: 8px 0 8px 80px; padding: 8px 12px; border-radius: 8px;
-    background: var(--tool-bg); border: 1px solid var(--tool-border);
-    font-size: 13px;
-  }
-  .tool-result {
-    margin: 4px 0 8px 80px; padding: 8px 12px; border-radius: 8px;
-    background: var(--result-bg); border: 1px solid var(--result-border);
-    font-size: 13px;
-  }
-  .tool-result pre {
-    margin: 6px 0 0; padding: 8px; background: white; border-radius: 4px;
-    overflow-x: auto; max-height: 220px; overflow-y: auto; font-size: 12px;
-  }
-  .tool-call .label, .tool-result .label {
-    font-weight: 600; font-size: 12px; color: var(--muted);
-  }
-  .tool-call .name { color: #b8860b; }
-
-  /* copy button on code blocks */
-  .code-block-wrap { position: relative; margin: 8px 0 0; }
-  .code-block-wrap pre {
-    margin: 0; background: var(--code-bg); color: var(--code-text);
-    padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 13px;
-  }
-  .copy-btn {
-    position: absolute; top: 6px; right: 6px;
-    font-size: 11px; padding: 3px 8px; border-radius: 4px;
-    background: rgba(255,255,255,0.1); color: #d4d4d4;
-    border: 1px solid rgba(255,255,255,0.2); cursor: pointer;
-    opacity: 0; transition: opacity 0.15s;
-  }
-  .code-block-wrap:hover .copy-btn { opacity: 1; }
-  .copy-btn:hover { background: rgba(255,255,255,0.2); }
-  .copy-btn.copied { background: var(--accent); border-color: var(--accent); opacity: 1; }
-  .tool-result .copy-btn { background: white; color: var(--text); border-color: var(--border); opacity: 0.6; }
-  .tool-result .copy-btn:hover { background: #f0f0f1; }
-  .tool-result .copy-btn.copied { opacity: 1; }
-
-  /* toast */
-  .toast {
-    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-    background: var(--text); color: white; padding: 8px 16px;
-    border-radius: 6px; font-size: 13px; z-index: 200;
-    animation: toast-fade 1.6s ease forwards;
-  }
-  @keyframes toast-fade {
-    0% { opacity: 0; transform: translate(-50%, 10px); }
-    15%, 85% { opacity: 1; transform: translate(-50%, 0); }
-    100% { opacity: 0; transform: translate(-50%, -10px); }
-  }
-
-  .error-msg {
-    margin: 8px 80px; padding: 10px 14px; border-radius: 8px;
-    background: var(--error-bg); border: 1px solid var(--error-border);
-    color: #a02020; font-size: 13px;
-  }
-
-  #composer {
-    max-width: 820px; width: 100%; margin: 0 auto; padding: 0 20px 20px;
-  }
-  .composer-row {
-    display: flex; gap: 8px; align-items: flex-end;
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 14px; padding: 8px;
-  }
-  #input {
-    flex: 1; border: none; outline: none; resize: none; font: inherit;
-    padding: 8px; max-height: 200px; min-height: 40px; background: transparent;
-  }
-  #send { border: none; align-self: stretch; padding: 0 16px; }
-
-  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 6px; }
-
-  /* Modal */
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
-    display: flex; align-items: center; justify-content: center; z-index: 100;
-  }
-  .modal {
-    background: var(--panel); border-radius: 10px; padding: 20px;
-    width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-  }
-  .modal h2 { margin: 0 0 12px; font-size: 16px; }
-  .modal input {
-    width: 100%; padding: 8px; border: 1px solid var(--border);
-    border-radius: 6px; font: inherit; margin-bottom: 12px;
-  }
-  .modal p { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
-  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
-
-  .typing { color: var(--muted); font-style: italic; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude 多角色聊天室</title>
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-<div id="app">
-  <header>
-    <h1>Claude Tool-Use Agent</h1>
-    <div class="actions">
-      <button id="stop-btn" title="中断当前生成" style="display:none;">⏹ 停止</button>
-      <button id="endpoint-toggle" title="切换后端实现">🔄 Native</button>
-      <button id="settings-btn" title="API Key">⚙ API Key</button>
-      <button id="clear-btn">清空</button>
+    <div id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>Claude 多角色聊天室</h1>
+            <div class="header-actions">
+                <button id="btn-rules" class="btn btn-ghost">⚙ 群公告</button>
+                <button id="btn-apikey" class="btn btn-ghost">🔑 API Key</button>
+                <button id="btn-clear" class="btn btn-ghost">清空</button>
+            </div>
+        </header>
+
+        <!-- Main area: roles panel + chat -->
+        <main class="app-main">
+            <!-- Roles panel -->
+            <aside class="roles-panel">
+                <h2 class="panel-title">角色</h2>
+                <div id="roles-list" class="roles-list"></div>
+                <button id="btn-add-role" class="btn btn-add-role">+ 新增角色</button>
+                <div class="roles-import-export">
+                    <button id="btn-export-roles" class="btn btn-small">导出 JSON</button>
+                    <button id="btn-import-roles" class="btn btn-small">导入 JSON</button>
+                    <input type="file" id="import-roles-file" accept=".json" style="display:none">
+                </div>
+            </aside>
+
+            <!-- Chat area -->
+            <section class="chat-area">
+                <div id="messages" class="messages"></div>
+                <div class="composer">
+                    <div class="composer-input-wrap">
+                        <textarea id="composer-input" class="composer-input"
+                            placeholder="发消息……用 @角色名 提及某个角色"
+                            rows="1"></textarea>
+                        <div id="mention-popup" class="mention-popup" style="display:none"></div>
+                    </div>
+                    <button id="btn-send" class="btn btn-primary">发送</button>
+                    <button id="btn-stop" class="btn btn-danger" style="display:none">停止</button>
+                </div>
+                <div class="composer-footer">Powered by Anthropic · 多角色聊天室</div>
+            </section>
+        </main>
     </div>
-  </header>
 
-  <div id="messages"></div>
-
-  <div id="composer">
-    <div class="composer-row">
-      <textarea id="input" rows="1" placeholder="问点啥…（Enter 发送，Shift+Enter 换行）"></textarea>
-      <button id="send" class="primary">发送</button>
+    <!-- Role editor modal -->
+    <div id="role-modal" class="modal" style="display:none">
+        <div class="modal-content">
+            <h3 id="role-modal-title">角色设定</h3>
+            <label>名字
+                <input id="role-name" type="text" placeholder="如：研究员">
+            </label>
+            <label>系统 prompt
+                <textarea id="role-prompt" rows="6" placeholder="你是一位严谨的研究员，回答喜欢引用数据⋯"></textarea>
+            </label>
+            <label>模型
+                <select id="role-model">
+                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Haiku)</option>
+                    <option value="claude-sonnet-5">claude-sonnet-5 (Sonnet)</option>
+                    <option value="claude-opus-4-7">claude-opus-4-7 (Opus)</option>
+                    <option value="claude-opus-4-8">claude-opus-4-8 (Opus)</option>
+                    <option value="claude-fable-5">claude-fable-5 (Fable)</option>
+                </select>
+            </label>
+            <div class="modal-actions">
+                <button id="role-cancel" class="btn btn-ghost">取消</button>
+                <button id="role-save" class="btn btn-primary">保存</button>
+            </div>
+        </div>
     </div>
-    <footer>Powered by Anthropic Claude · 工具：联网搜索 + Python 代码 + Wikipedia + 文件读取 · 双后端：Native 与 LangChain</footer>
-  </div>
-</div>
 
-<div id="settings-modal" class="modal-backdrop" style="display:none;">
-  <div class="modal">
-    <h2>配置 Anthropic API Key</h2>
-    <p>留空则使用服务端的 ANTHROPIC_API_KEY 环境变量。Key 仅保存在浏览器 localStorage，不会写入服务器持久存储。</p>
-    <input id="api-key-input" type="password" placeholder="sk-ant-..." />
-    <div class="actions">
-      <button id="settings-cancel">取消</button>
-      <button id="settings-save" class="primary">保存</button>
+    <!-- Group rules modal -->
+    <div id="rules-modal" class="modal" style="display:none">
+        <div class="modal-content">
+            <h3>群公告（所有角色共同遵循）</h3>
+            <textarea id="rules-input" rows="10"
+                placeholder="当提到代码问题时，@代码手 应先确认再让别人发言；每轮最多 3 次模型间对话；不要重复别人已经说过的话。"></textarea>
+            <div class="modal-actions">
+                <button id="rules-cancel" class="btn btn-ghost">取消</button>
+                <button id="rules-save" class="btn btn-primary">保存</button>
+            </div>
+        </div>
     </div>
-  </div>
-</div>
 
-<script>
-const $ = (sel) => document.querySelector(sel);
-const messagesEl = $("#messages");
-const inputEl = $("#input");
-const sendBtn = $("#send");
+    <!-- API key modal -->
+    <div id="apikey-modal" class="modal" style="display:none">
+        <div class="modal-content">
+            <h3>Anthropic API Key</h3>
+            <input id="apikey-input" type="password" placeholder="sk-ant-...">
+            <p class="modal-hint">Key 仅保存在浏览器 localStorage，不会上传到任何第三方。</p>
+            <div class="modal-actions">
+                <button id="apikey-cancel" class="btn btn-ghost">取消</button>
+                <button id="apikey-save" class="btn btn-primary">保存</button>
+            </div>
+        </div>
+    </div>
 
-let busy = false;
-let history = []; // [{role, content}]
-let endpoint = localStorage.getItem("agent_endpoint") || "native"; // native | langchain
+    <!-- Empty state for no roles -->
+    <div id="empty-roles-toast" class="toast" style="display:none">请先添加至少一个角色。</div>
 
-// ---------- Settings ----------
-const endpointBtn = $("#endpoint-toggle");
-function refreshEndpointLabel() {
-  endpointBtn.textContent = endpoint === "langchain" ? "🔄 LangChain" : "🔄 Native";
-  endpointBtn.title = endpoint === "langchain"
-    ? "当前：LangChain 后端 (POST /api/chat/langchain) — 点击切回 native"
-    : "当前：Native 后端 (POST /api/chat) — 点击切到 LangChain";
-}
-refreshEndpointLabel();
-endpointBtn.addEventListener("click", () => {
-  endpoint = endpoint === "langchain" ? "native" : "langchain";
-  localStorage.setItem("agent_endpoint", endpoint);
-  refreshEndpointLabel();
-});
-
-$("#settings-btn").addEventListener("click", () => {
-  $("#api-key-input").value = localStorage.getItem("anthropic_api_key") || "";
-  $("#settings-modal").style.display = "flex";
-});
-$("#settings-cancel").addEventListener("click", () => {
-  $("#settings-modal").style.display = "none";
-});
-$("#settings-save").addEventListener("click", () => {
-  const v = $("#api-key-input").value.trim();
-  if (v) localStorage.setItem("anthropic_api_key", v);
-  else localStorage.removeItem("anthropic_api_key");
-  $("#settings-modal").style.display = "none";
-});
-
-// ---------- Clear ----------
-$("#clear-btn").addEventListener("click", () => {
-  if (!confirm("清空对话历史？")) return;
-  history = [];
-  messagesEl.innerHTML = "";
-  try { localStorage.removeItem(HISTORY_KEY); } catch {}
-});
-
-// ---------- Input ----------
-inputEl.addEventListener("input", () => {
-  inputEl.style.height = "auto";
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
-});
-inputEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
-});
-sendBtn.addEventListener("click", send);
-
-// ---------- Render ----------
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderMarkdown(text) {
-  if (typeof marked !== "undefined") {
-    return marked.parse(text, { breaks: true, gfm: true });
-  }
-  // fallback: code fences + inline code only
-  const parts = [];
-  const re = /```(\w+)?\n([\s\S]*?)```/g;
-  let last = 0, m;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push({ t: "text", v: text.slice(last, m.index) });
-    parts.push({ t: "code", lang: m[1] || "", v: m[2] });
-    last = re.lastIndex;
-  }
-  if (last < text.length) parts.push({ t: "text", v: text.slice(last) });
-  return parts.map(p => {
-    if (p.t === "code") return `<pre><code class="lang-${escapeHtml(p.lang)}">${escapeHtml(p.v)}</code></pre>`;
-    return escapeHtml(p.v).replace(/`([^`]+)`/g, "<code>$1</code>");
-  }).join("");
-}
-
-function addMessage(role, contentHtml) {
-  const div = document.createElement("div");
-  div.className = "msg " + role;
-  div.innerHTML = `<div class="msg-role">${role === "user" ? "你" : "Claude"}</div>
-    <div class="bubble">${contentHtml}</div>`;
-  messagesEl.appendChild(div);
-  decorateCodeBlocks(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return div;
-}
-
-function addToolCard(name, input) {
-  const div = document.createElement("div");
-  div.className = "tool-call";
-  const inputStr = typeof input === "string" ? input : JSON.stringify(input, null, 2);
-  div.innerHTML = `<div class="label">🔧 工具调用 <span class="name">${escapeHtml(name)}</span></div>`
-    + wrapCodeBlock(inputStr);
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return div;
-}
-
-function addResultCard(name, output) {
-  const div = document.createElement("div");
-  div.className = "tool-result";
-  div.innerHTML = `<div class="label">📥 <span class="name">${escapeHtml(name)}</span> 返回</div>`
-    + wrapCodeBlock(output);
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-// Wrap a raw text blob in a code-block container with a copy button.
-function wrapCodeBlock(text) {
-  return `<div class="code-block-wrap"><pre>${escapeHtml(text)}</pre>`
-    + `<button class="copy-btn" type="button">复制</button></div>`;
-}
-
-// For tool calls and results we already have wrapCodeBlock. Assistant bubbles
-// render code fences via marked (raw <pre><code>). Find those and attach copy buttons.
-function decorateCodeBlocks(node) {
-  const blocks = node.querySelectorAll("pre");
-  blocks.forEach(pre => {
-    if (pre.parentElement && pre.parentElement.classList.contains("code-block-wrap")) return;
-    const wrap = document.createElement("div");
-    wrap.className = "code-block-wrap";
-    const btn = document.createElement("button");
-    btn.className = "copy-btn";
-    btn.type = "button";
-    btn.textContent = "复制";
-    pre.replaceWith(wrap);
-    wrap.appendChild(pre);
-    wrap.appendChild(btn);
-  });
-}
-
-function showToast(msg) {
-  const t = document.createElement("div");
-  t.className = "toast";
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 1700);
-}
-
-// Wire copy buttons via event delegation — handles DOM inserts without re-binding.
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest(".copy-btn");
-  if (!btn) return;
-  const wrap = btn.closest(".code-block-wrap");
-  const pre = wrap && wrap.querySelector("pre");
-  if (!pre) return;
-  const text = pre.innerText || pre.textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    btn.classList.add("copied");
-    btn.textContent = "已复制";
-    showToast("已复制到剪贴板");
-    setTimeout(() => {
-      btn.classList.remove("copied");
-      btn.textContent = "复制";
-    }, 1400);
-  }).catch(() => {
-    btn.textContent = "失败";
-    setTimeout(() => { btn.textContent = "复制"; }, 1400);
-  });
-});
-
-function addError(message) {
-  const div = document.createElement("div");
-  div.className = "error-msg";
-  div.textContent = message;
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-// ---------- Send + SSE ----------
-let currentAbort = null;
-const stopBtn = $("#stop-btn");
-
-function setBusy(b) {
-  busy = b;
-  sendBtn.disabled = b;
-  inputEl.disabled = b;
-  stopBtn.style.display = b ? "" : "none";
-}
-
-stopBtn.addEventListener("click", () => {
-  if (currentAbort) currentAbort.abort();
-});
-
-const HISTORY_KEY = "agent_history_v1";
-
-function saveHistory() {
-  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
-}
-
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) return;
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return;
-    history = arr;
-    for (const m of history) {
-      const div = addMessage(m.role, m.role === "user" ? escapeHtml(m.content) : renderMarkdown(m.content));
-      if (m.role === "assistant") decorateCodeBlocks(div.querySelector(".bubble"));
-    }
-  } catch {}
-}
-
-async function send() {
-  const text = inputEl.value.trim();
-  if (!text || busy) return;
-  inputEl.value = "";
-  inputEl.style.height = "auto";
-
-  addMessage("user", escapeHtml(text));
-  history.push({ role: "user", content: text });
-  saveHistory();
-
-  const assistantDiv = addMessage("assistant", '<span class="typing">思考中…</span>');
-  const bubble = assistantDiv.querySelector(".bubble");
-
-  let apiKey = localStorage.getItem("anthropic_api_key") || "";
-
-  setBusy(true);
-  currentAbort = new AbortController();
-
-  let fullText = "";
-  let firstChunk = true;
-  let aborted = false;
-
-  try {
-      const resp = await fetch(endpoint === "langchain" ? "/api/chat/langchain" : "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: text,
-        api_key: apiKey,
-        history: history.slice(0, -1), // exclude current (server adds it)
-      }),
-      signal: currentAbort.signal,
-    });
-
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: "请求失败" }));
-      bubble.innerHTML = "";
-      addError(err.error || `HTTP ${resp.status}`);
-      setBusy(false);
-      currentAbort = null;
-      return;
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE events separated by \n\n
-      let idx;
-      while ((idx = buffer.indexOf("\n\n")) >= 0) {
-        const raw = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const evt = parseSse(raw);
-        if (!evt) continue;
-
-        if (firstChunk && (evt.event === "text" || evt.event === "tool_use" || evt.event === "tool_result")) {
-          bubble.innerHTML = "";
-          firstChunk = false;
-        }
-
-        if (evt.event === "text") {
-          fullText += evt.data.text;
-          bubble.innerHTML = renderMarkdown(fullText);
-          decorateCodeBlocks(bubble);
-        } else if (evt.event === "tool_use") {
-          if (!firstChunk) { bubble.innerHTML = renderMarkdown(fullText); decorateCodeBlocks(bubble); }
-          addToolCard(evt.data.name, evt.data.input);
-        } else if (evt.event === "tool_result") {
-          addResultCard(evt.data.name, evt.data.output);
-        } else if (evt.event === "error") {
-          addError(evt.data.message);
-        } else if (evt.event === "done") {
-          // finish
-        }
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
-    }
-
-    if (fullText) {
-      history.push({ role: "assistant", content: fullText });
-      saveHistory();
-    }
-  } catch (e) {
-    aborted = (e.name === "AbortError");
-    if (aborted) {
-      bubble.innerHTML = fullText ? renderMarkdown(fullText) : '<span class="typing">(已停止)</span>';
-      if (fullText) decorateCodeBlocks(bubble);
-      if (fullText) { history.push({ role: "assistant", content: fullText }); saveHistory(); }
-    } else {
-      bubble.innerHTML = "";
-      addError("网络错误: " + e.message);
-    }
-  } finally {
-    if (firstChunk && !aborted) bubble.innerHTML = '<span class="typing">(无回复)</span>';
-    currentAbort = null;
-    setBusy(false);
-  }
-}
-
-loadHistory();
-
-function parseSse(raw) {
-  const lines = raw.split("\n");
-  let event = "message", dataStr = "";
-  for (const line of lines) {
-    if (line.startsWith("event:")) event = line.slice(6).trim();
-    else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
-  }
-  if (!dataStr) return null;
-  try {
-    return { event, data: dataStr === "null" ? null : JSON.parse(dataStr) };
-  } catch {
-    return { event, data: { raw: dataStr } };
-  }
-}
-</script>
+    <script src="/static/app.js"></script>
 </body>
 </html>
