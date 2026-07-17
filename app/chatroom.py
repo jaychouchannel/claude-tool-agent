@@ -41,10 +41,21 @@ def _parse_room(body: dict[str, Any]) -> RoomConfig | str:
         ]
         if not roles:
             return "at least one role is required"
+        # Combine announcement (group notice) and free-form group rules into the
+        # single system-prompt field used downstream. Either may be absent.
+        announcement = (raw.get("announcement") or "").strip()
+        group_rules = (raw.get("group_rules") or "").strip()
+        combined: str
+        if announcement and group_rules:
+            combined = f"【群公告】\n{announcement}\n\n【补充规则】\n{group_rules}"
+        elif announcement:
+            combined = f"【群公告】\n{announcement}"
+        else:
+            combined = group_rules
         return RoomConfig(
             room_id=raw.get("room_id", "default"),
             roles=roles,
-            group_rules=raw.get("group_rules", ""),
+            group_rules=combined,
         )
     except (KeyError, TypeError) as e:
         return f"invalid room config: {e}"
