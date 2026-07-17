@@ -3,38 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Claude 多角色聊天室</title>
+    <title>AI 群聊</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <div id="app">
-        <!-- Header -->
-        <header class="app-header">
-            <h1>Claude 多角色聊天室</h1>
-            <div class="header-actions">
-                <button id="btn-rules" class="btn btn-ghost">⚙ 群公告</button>
-                <button id="btn-apikey" class="btn btn-ghost">🔑 API Key</button>
-                <button id="btn-clear" class="btn btn-ghost">清空</button>
+        <!-- Left: Room list (groups) -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>AI 群聊</h1>
+                <button id="btn-new-room" class="btn-icon" title="发起群聊">＋</button>
             </div>
-        </header>
+            <div class="sidebar-search">
+                <input id="room-search" type="text" placeholder="搜索群聊" />
+            </div>
+            <div id="room-list" class="room-list"></div>
+            <div class="sidebar-footer">
+                <button id="btn-apikey" class="btn btn-ghost btn-block">🔑 API Key</button>
+            </div>
+        </aside>
 
-        <!-- Main area: roles panel + chat -->
-        <main class="app-main">
-            <!-- Roles panel -->
-            <aside class="roles-panel">
-                <h2 class="panel-title">角色</h2>
-                <div id="roles-list" class="roles-list"></div>
-                <button id="btn-add-role" class="btn btn-add-role">+ 新增角色</button>
-                <div class="roles-import-export">
-                    <button id="btn-export-roles" class="btn btn-small">导出 JSON</button>
-                    <button id="btn-import-roles" class="btn btn-small">导入 JSON</button>
-                    <input type="file" id="import-roles-file" accept=".json" style="display:none">
+        <!-- Main chat area -->
+        <main class="chat-area" id="chat-area">
+            <!-- Empty placeholder when no room selected -->
+            <div id="chat-empty" class="chat-empty">
+                <div class="chat-empty-icon">💬</div>
+                <h2>发起一个群聊，开始聊吧</h2>
+                <p>点击左上角「＋」拉起一个群，邀请 AI 角色进群、写群公告，然后开聊。</p>
+            </div>
+
+            <!-- Active room view (hidden until a room is selected) -->
+            <div id="chat-view" class="chat-view" style="display:none">
+                <header class="chat-header">
+                    <div class="chat-header-info">
+                        <h2 id="current-room-name">群名</h2>
+                        <div class="chat-header-meta">
+                            <span id="current-room-members">0 位成员</span>
+                            <button id="btn-announcement" class="btn-link">📢 群公告</button>
+                            <button id="btn-room-settings" class="btn-link">⚙ 设置</button>
+                            <button id="btn-clear-history" class="btn-link btn-link-danger">清空记录</button>
+                            <button id="btn-leave-room" class="btn-link btn-link-danger">退出群聊</button>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- Announcement banner -->
+                <div id="announcement-banner" class="announcement-banner" style="display:none">
+                    <span class="announcement-label">📢 群公告</span>
+                    <span id="announcement-text" class="announcement-text"></span>
                 </div>
-            </aside>
 
-            <!-- Chat area -->
-            <section class="chat-area">
+                <!-- Messages -->
                 <div id="messages" class="messages"></div>
+
+                <!-- Composer -->
                 <div class="composer">
                     <div class="composer-input-wrap">
                         <textarea id="composer-input" class="composer-input"
@@ -45,12 +67,58 @@
                     <button id="btn-send" class="btn btn-primary">发送</button>
                     <button id="btn-stop" class="btn btn-danger" style="display:none">停止</button>
                 </div>
-                <div class="composer-footer">Powered by Anthropic · 多角色聊天室</div>
-            </section>
+                <div class="composer-footer">Powered by Anthropic · 多角色群聊</div>
+            </div>
         </main>
     </div>
 
-    <!-- Role editor modal -->
+    <!-- New / edit room modal -->
+    <div id="room-modal" class="modal" style="display:none">
+        <div class="modal-content modal-content-wide">
+            <h3 id="room-modal-title">发起群聊</h3>
+
+            <label>群名
+                <input id="room-name" type="text" placeholder="如：代码评审小组">
+            </label>
+
+            <label>群公告（聊天开始前给所有 AI 角色的共同指令）
+                <textarea id="room-announcement" rows="4"
+                    placeholder="例如：每轮最多 3 次模型间对话，最后必须给出最终结论；不要复述别人已经说过的话；用中文回答。"></textarea>
+            </label>
+
+            <label>补充规则（可选，附加在群公告之后）
+                <textarea id="room-rules" rows="3"
+                    placeholder="例如：当涉及代码时 @代码手 应先确认需求。"></textarea>
+            </label>
+
+            <div class="modal-section">
+                <div class="modal-section-header">
+                    <span>群成员（从通讯录中点选拉入群）</span>
+                    <button id="btn-add-member" class="btn btn-small">＋ 从通讯录添加</button>
+                </div>
+                <div id="room-member-list" class="room-member-list"></div>
+                <div id="member-picker" class="member-picker" style="display:none">
+                    <div class="member-picker-search">
+                        <input id="member-picker-search" type="text" placeholder="搜索通讯录">
+                    </div>
+                    <div id="member-picker-list" class="member-picker-list"></div>
+                </div>
+            </div>
+
+            <label class="custom-role-section">
+                <span>或者在群内直接创建新 AI 角色（不会保存到通讯录）</span>
+                <button id="btn-add-custom-role" class="btn btn-small">＋ 新建本群专属角色</button>
+                <div id="custom-role-list" class="custom-role-list"></div>
+            </label>
+
+            <div class="modal-actions">
+                <button id="room-cancel" class="btn btn-ghost">取消</button>
+                <button id="room-save" class="btn btn-primary">创建群聊</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick role editor inside room modal -->
     <div id="role-modal" class="modal" style="display:none">
         <div class="modal-content">
             <h3 id="role-modal-title">角色设定</h3>
@@ -76,15 +144,15 @@
         </div>
     </div>
 
-    <!-- Group rules modal -->
-    <div id="rules-modal" class="modal" style="display:none">
+    <!-- Announcement viewer modal -->
+    <div id="announcement-modal" class="modal" style="display:none">
         <div class="modal-content">
-            <h3>群公告（所有角色共同遵循）</h3>
-            <textarea id="rules-input" rows="10"
-                placeholder="当提到代码问题时，@代码手 应先确认再让别人发言；每轮最多 3 次模型间对话；不要重复别人已经说过的话。"></textarea>
+            <h3>群公告</h3>
+            <textarea id="announcement-view" rows="10" readonly
+                placeholder="（暂无群公告）"></textarea>
             <div class="modal-actions">
-                <button id="rules-cancel" class="btn btn-ghost">取消</button>
-                <button id="rules-save" class="btn btn-primary">保存</button>
+                <button id="announcement-close" class="btn btn-ghost">关闭</button>
+                <button id="announcement-edit" class="btn btn-primary">编辑</button>
             </div>
         </div>
     </div>
@@ -102,8 +170,8 @@
         </div>
     </div>
 
-    <!-- Empty state for no roles -->
-    <div id="empty-roles-toast" class="toast" style="display:none">请先添加至少一个角色。</div>
+    <!-- Toast -->
+    <div id="toast" class="toast" style="display:none"></div>
 
     <script src="/static/app.js"></script>
 </body>

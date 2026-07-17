@@ -6,9 +6,9 @@
   <img src="https://img.shields.io/badge/SSE-Streaming-brightgreen" alt="SSE" />
 </p>
 
-<h1 align="center">Claude 多角色聊天室</h1>
+<h1 align="center">AI 群聊 — WeChat-style Multi-Room Chatroom</h1>
 <p align="center">
-  <em>Multi-Role Chatroom — multiple Claude instances, each with its own personality and model, conversing together in real time.</em>
+  <em>像微信一样建群、拉 AI 角色进群、写群公告，然后一起聊天。</em>
   <br /><a href="#quick-start">Quick Start</a> ·
   <a href="#features">Features</a> ·
   <a href="#architecture">Architecture</a> ·
@@ -19,13 +19,20 @@
 
 ## Overview
 
-**Claude 多角色聊天室** turns a single AI chat into an **intelligent discussion panel**. You define several roles — each with a name, a system prompt, and a Claude model — then send them a message. Every role replies in turn, can @mention others for chained follow-ups, and follows a natural-language group rule you set.
+**AI 群聊** turns a single AI chat into a **WeChat-style multi-room group chat platform**. Create multiple chat groups, each with its own name, roster of AI roles (pulled from an address book or created on the fly), group announcement, and conversation history — all persisted in your browser.
 
-Built on FastAPI and the Anthropic SDK, with a pure-JavaScript frontend that streams each role's response token-by-token via Server-Sent Events. No database, no WebSocket, no model orchestration platform — just an orchestrator that schedules each role's Claude call and serialises the SSE stream.
+- **Left sidebar**: group list with search — switch between rooms instantly
+- **Room management**: create, edit, and delete groups; each group has its own roles, announcement, rules, and chat history
+- **Contact library**: preset AI role definitions (研究员 / 代码手 / 创意家 / 评论家 / 编剧 / 历史学家) that you can pull into any group
+- **Custom roles per room**: one-off roles that belong only to a specific group
+- **Group announcement + rules**: the announcement is shown as a banner at the top of the chat and prepended to every AI role's system prompt; supplementary rules go after it
+- **@Mention chaining**: type `@角色名` to direct specific roles to speak next
+- **SSE token streaming**: every AI reply streams token-by-token with a blinking cursor
+- **Stateless backend**: all room config lives in `localStorage`; the server receives everything it needs in each POST
 
 ### Why?
 
-Single-agent chatbots answer your question and stop. But many real tasks — brainstorming a feature, stress-testing a design, writing + reviewing code — benefit from **multiple perspectives in the same thread**: a sceptical reviewer, a pragmatic engineer, a domain expert. Hand-rolling that as separate prompts is tedious. This project makes it a first-class UI: configure once, then watch the conversation unfold.
+WeChat-style rooms let you manage **multiple AI discussion panels** independently: a code-review room, a brainstorming room, a writing workshop — each with its own roster and rules, all in the same UI you already know how to use. Switching context is one click, no config reloading needed.
 
 ---
 
@@ -52,7 +59,9 @@ Open [http://localhost:8000](http://localhost:8000).
 
 No env key? The UI will prompt you for one on first launch — paste it into the API Key modal and it's stored in the browser's `localStorage` only (never sent anywhere except directly to Anthropic).
 
-Two default roles — **研究员** (Haiku) and **代码手** (Sonnet) — are seeded automatically so you can start chatting immediately. Edit, add, or delete them via the roles panel on the left.
+If no env key is set, the UI will prompt you for one on first launch — paste it into the API Key modal and it's stored in the browser's `localStorage` only (never sent anywhere except directly to Anthropic).
+
+A default group **代码评审小组** is seeded with two roles (代码手 + 审查员) so you can start chatting immediately. The contact library also ships with 6 preset AI roles you can pull into any new group.
 
 ---
 
@@ -60,17 +69,18 @@ Two default roles — **研究员** (Haiku) and **代码手** (Sonnet) — are s
 
 | Capability | Description |
 |---|---|
-| **Multiple Roles** 🎭 | Define any number of roles, each with its own name, system prompt, and Claude model. Roles reply in registration order; a `MAX_TURNS=20` ceiling prevents infinite loops. |
-| **Mixed Model Roster** 🧠 | Each role can use a different Claude tier — Haiku for fast cheap replies, Sonnet for balanced work, Opus for hard reasoning, Fable for variety. Mix freely within one conversation. |
-| **@Mention Chaining** 🔗 | Type `@角色名` in your message to invite specific roles to speak next — the orchestrator re-orders the turn queue accordingly. Works mid-conversation too: roles can @mention each other. |
-| **Group Rules** 📜 | A natural-language "group公告" applied to every role on every turn. Use it to set turn limits, coordination rules ("don't repeat what others said", "agree on a conclusion before ending"). |
-| **SSE Token Streaming** ⚡ | Each role's reply is streamed token-by-token via Server-Sent Events — watch the discussion unfold live, with a blinking cursor on the active role. |
-| **Streaming Stop Button** ⛔ | Send a long message and regret it? Hit the stop button — the SSE connection is aborted via `AbortController` and partial replies are preserved in history. |
-| **Markdown Rendering** ✨ | Headings, lists, code blocks, tables, blockquotes, links, inline code — all rendered safely. HTML is escaped before markdown transforms, so model output cannot inject markup. |
-| **History Persistence** 💾 | Full conversation history survives page refresh, stored in `localStorage`. Clear it with one button when you want a fresh slate. |
-| **Role Import / Export** 📥📤 | Configure roles + group rules once, export to JSON, share with teammates or check into a repo. Import via the file picker. |
-| **Bring-Your-Own-Key** 🔑 | Paste your Anthropic key in the UI (stored locally, never sent to any third party) or configure it server-side via `ANTHROPIC_API_KEY`. |
-| **Zero Backend State** ☁️ | The FastAPI server is stateless — every request carries the full room config and history. Scale horizontally by just running more processes; sticky sessions not needed. |
+| **多房间 (Multi-Room)** 🏠 | Create unlimited chat groups in the left sidebar. Each has independent name, members, announcement, rules, and history. Search and switch in one click. |
+| **通讯录 (Contact Library)** 📇 | 6 preset AI roles (研究员 / 代码手 / 创意家 / 评论家 / 编剧 / 历史学家) — pull any into a group, or create custom roles per room. |
+| **群公告 (Group Announcement)** 📢 | A notice shown as a banner at the top of the chat and prepended to every AI role's system prompt. Combined with optional supplementary rules. |
+| **群成员管理** 👥 | Pull-from-address-book picker with search, plus per-room custom roles. Click any member chip to edit its prompt and model. |
+| **Mixed Model Roster** 🧠 | Each role can use a different Claude tier — Haiku for fast cheap replies, Sonnet for balanced work, Opus for hard reasoning, Fable for variety. Mix freely within one group. |
+| **@Mention Chaining** 🔗 | Type `@角色名` in your message to invite specific roles to speak next — the orchestrator re-orders the turn queue accordingly. Roles can @mention each other too. |
+| **SSE Token Streaming** ⚡ | Each role's reply streams token-by-token via Server-Sent Events — watch the discussion unfold live, with a blinking cursor on the active role. |
+| **Stop Button** ⛔ | Hit stop mid-stream — the SSE connection is aborted via `AbortController` and partial replies are kept. |
+| **Markdown Rendering** ✨ | Headings, lists, code blocks, tables, blockquotes, links, inline code — all rendered safely (HTML escaped before transforms). |
+| **History Persistence** 💾 | Every group's full history survives page refresh in `localStorage`. Clear per-group with the 「清空记录」 button, or delete a group entirely with 「退出群聊」. |
+| **Bring-Your-Own-Key** 🔑 | Paste your Anthropic key in the UI (stored locally) or set `ANTHROPIC_API_KEY` server-side. |
+| **Zero Backend State** ☁️ | The FastAPI server is stateless — every request carries the full room config and history. Scale horizontally by just running more processes. |
 
 ---
 
@@ -150,25 +160,38 @@ Turn cap is `MAX_TURNS = 20` — a backstop against a runaway mention cycle, not
 
 ## Usage
 
-### Configuration
+### Creating a Group (WeChat-style)
 
-For each role, set:
+1. Click **＋** in the top-left of the sidebar → **发起群聊** modal opens
+2. Enter a group name (e.g. `代码评审小组`)
+3. Write the **群公告** (group announcement) — this is prepended to every AI role's system prompt on every turn, and shown as a banner at the top of the chat
+4. (Optional) Add **补充规则** for finer coordination cues appended after the announcement
+5. **Pull members from 通讯录** — click 「＋ 从通讯录添加」 to open the contact picker, then click any preset role to add it to the group
+6. **Or create custom roles** just for this room — click 「＋ 新建本群专属角色」 and define name / system prompt / model
+7. Click **创建群聊** — the new group appears at the top of the sidebar
 
-- **Name** — what others @mention to invite it; also displayed as the bubble author
-- **System prompt** — the role's persona and instructions ("you are a sceptical reviewer…")
-- **Model** — pick from the dropdown (Haiku / Sonnet / Opus / Fable); custom model IDs also accepted
+### Group Announcement vs. Supplementary Rules
 
-The **group rule** (群公告) is prepended to every role's system prompt on every turn — it's the shared "constitution" of the room. Use it for things like:
+- **群公告** (announcement): the "constitution" of the room — high-level coordination. Example: *"每轮最多 3 次模型间对话，最后必须给出最终结论。用中文回答；不要复述别人已经说过的话。"*
+- **补充规则** (rules): finer cues. Example: *"#代码手 在写代码前先让 #研究员 确认需求"* (the `#` prefix is stripped before being shown to the model so the discussion isn't noisy)
 
-- *"#代码手 在写代码前先让 #研究员 确认需求"*
-- *"每轮最多 3 次模型间对话，然后必须给出最终结论"*
-- *"用中文回答；不要复述别人已经说过的内容"*
+Backend merges them as: `【群公告】\n{announcement}\n\n【补充规则】\n{group_rules}` (whichever sections are empty are dropped).
+
+### Editing / Deleting a Room
+
+- In the chat header, click **⚙ 设置** to reopen the room modal for edits
+- **清空记录** wipes the conversation history but keeps the room
+- **退出群聊** deletes the room entirely
+
+### Switching Rooms
+
+Click any room card in the left sidebar to switch. Each room keeps its own roles, announcement, rules, and full history. Active stream is aborted on switch.
 
 ### Example Rooms
 
-- **Code review panel**: `代码手` (Sonnet, pragmatic engineer) + `审查员` (Opus, meticulous reviewer) + `架构师` (Sonnet, big-picture thinker). Group rule: "审查员必须挑出至少两个问题，否则投票放弃方案。"
-- **Writing workshop**: `主笔` (Opus) + `编辑` (Sonnet) + `校对` (Haiku, fast). Group rule: "主笔先写一段，编辑提建议，校对最后改错别字。每轮 3 次对话后输出定稿。"
-- **Debate club**: `正方` (Sonnet) + `反方` (Sonnet) + `评委` (Opus). Group rule: "正方反方各陈述 1 次，评委给出胜负判决。"
+- **Code review panel**: `代码手` (Sonnet, pragmatic engineer) + `审查员` (Opus, meticulous reviewer) + `架构师` (Sonnet, big-picture thinker). Group announcement: "审查员必须挑出至少两个问题，否则投票放弃方案。"
+- **Writing workshop**: `主笔` (Opus) + `编辑` (Sonnet) + `校对` (Haiku, fast). Group announcement: "主笔先写一段，编辑提建议，校对最后改错别字。每轮 3 次对话后输出定稿。"
+- **Debate club**: `正方` (Sonnet) + `反方` (Sonnet) + `评委` (Opus). Group announcement: "正方反方各陈述 1 次，评委给出胜负判决。"
 
 ### @Mention Behaviour
 
