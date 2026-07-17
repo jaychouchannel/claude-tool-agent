@@ -75,6 +75,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderRoomList();
     renderCurrentRoom();
     bindEvents();
+    updateApiKeyStatus();
     if (!state.apiKey) openApiKeyModal();
 });
 
@@ -116,15 +117,18 @@ function currentRoom() {
 /* ───── Room list (left sidebar) ───── */
 function renderRoomList(filter = "") {
     const list = document.getElementById("room-list");
+    const emptyEl = document.getElementById("room-list-empty");
     list.innerHTML = "";
     const filtered = state.rooms.filter(r => !filter || (r.name || "").toLowerCase().includes(filter.toLowerCase()));
     if (!filtered.length) {
-        const empty = document.createElement("div");
-        empty.className = "room-list-empty";
-        empty.textContent = filter ? "没有匹配的群聊" : "暂无群聊，点 ＋ 发起一个";
-        list.appendChild(empty);
+        list.style.display = "none";
+        emptyEl.style.display = "";
+        emptyEl.querySelector(".room-list-empty-title").textContent = filter ? "没有匹配的群聊" : "还没有群聊";
+        emptyEl.querySelector(".room-list-empty-sub").textContent = filter ? "换个关键词试试" : "点右上角「＋」拉一个群";
         return;
     }
+    list.style.display = "";
+    emptyEl.style.display = "none";
     // Sort: rooms with more recent history first
     const sorted = [...filtered].sort((a, b) => {
         const at = lastMessageTime(a);
@@ -179,8 +183,16 @@ function renderCurrentRoom() {
     empty.style.display = "none";
     view.style.display = "";
 
+    // Chat header avatar
+    const avatarEl = document.getElementById("current-room-avatar");
+    avatarEl.textContent = initials(room.name);
+    avatarEl.style.background = getRoomGradient(room.id);
+
     document.getElementById("current-room-name").textContent = room.name || "未命名群聊";
     document.getElementById("current-room-members").textContent = `${(room.roles || []).length} 位成员`;
+
+    // Member strip
+    renderMemberStrip(room);
 
     const banner = document.getElementById("announcement-banner");
     const bannerText = document.getElementById("announcement-text");
@@ -217,7 +229,6 @@ function appendUserMessage(text) {
     wrap.appendChild(div);
     scrollToBottom();
 }
-
 function appendAssistantMessage(roleName, initialText = "", streaming = false) {
     const wrap = document.getElementById("messages");
     const room = currentRoom() || { roles: [] };
@@ -380,6 +391,62 @@ function stopStream() {
 function setSending(sending) {
     document.getElementById("btn-send").style.display = sending ? "none" : "";
     document.getElementById("btn-stop").style.display = sending ? "" : "none";
+    const status = document.getElementById("composer-footer-status");
+    if (status) status.textContent = sending ? "发送中…" : "就绪";
+}
+
+/* ───── Member strip & room avatar helpers ───── */
+function renderMemberStrip(room) {
+    const strip = document.getElementById("member-strip");
+    if (!strip) return;
+    strip.innerHTML = "";
+    const roles = room.roles || [];
+    const VISIBLE_MAX = 8;
+    const visible = roles.slice(0, VISIBLE_MAX);
+    visible.forEach((r, i) => {
+        const item = document.createElement("div");
+        item.className = "member-strip-item";
+        item.innerHTML = `
+            <div class="member-strip-avatar" style="background:${roleColor(i)}">${escapeHtml(roleInitial(r.name))}</div>
+            <div class="member-strip-name">${escapeHtml(r.name)}</div>
+        `;
+        item.addEventListener("click", () => openRoomModal(room.id));
+        strip.appendChild(item);
+    });
+    if (roles.length > VISIBLE_MAX) {
+        const more = document.createElement("div");
+        more.className = "member-strip-item";
+        more.innerHTML = `<div class="member-strip-more">+${roles.length - VISIBLE_MAX}</div>`;
+        more.addEventListener("click", () => openRoomModal(room.id));
+        strip.appendChild(more);
+    }
+}
+
+const ROOM_GRADIENTS = [
+    "linear-gradient(135deg, #07c160, #2ecc71)",
+    "linear-gradient(135deg, #3b82f6, #60a5fa)",
+    "linear-gradient(135deg, #8b5cf6, #a78bfa)",
+    "linear-gradient(135deg, #ef4444, #f87171)",
+    "linear-gradient(135deg, #f59e0b, #fbbf24)",
+    "linear-gradient(135deg, #ec4899, #f472b6)",
+];
+function getRoomGradient(roomId) {
+    if (!roomId) return ROOM_GRADIENTS[0];
+    let h = 0;
+    for (let i = 0; i < roomId.length; i++) h = (h * 31 + roomId.charCodeAt(i)) | 0;
+    return ROOM_GRADIENTS[Math.abs(h) % ROOM_GRADIENTS.length];
+}
+
+function updateApiKeyStatus() {
+    const dot = document.getElementById("apikey-status-dot");
+    if (!dot) return;
+    if (state.apiKey) {
+        dot.className = "status-dot status-dot-ok";
+        dot.title = "API Key 已配置";
+    } else {
+        dot.className = "status-dot status-dot-pending";
+        dot.title = "未配置 API Key";
+    }
 }
 
 /* ───── Mention popup ───── */
@@ -552,8 +619,10 @@ function bindEvents() {
     });
     document.getElementById("btn-stop").addEventListener("click", stopStream);
     document.getElementById("btn-new-room").addEventListener("click", () => openRoomModal(null));
+    document.getElementById("btn-empty-new-room").addEventListener("click", () => openRoomModal(null));
     document.getElementById("btn-room-settings").addEventListener("click", () => openRoomModal(currentRoom()?.id));
     document.getElementById("btn-announcement").addEventListener("click", openAnnouncementViewer);
+    document.getElementById("announcement-edit-btn").addEventListener("click", () => openRoomModal(currentRoom()?.id));
     document.getElementById("btn-clear-history").addEventListener("click", () => {
         const room = currentRoom(); if (!room) return;
         if (!confirm(`清空「${room.name}」的对话记录？`)) return;
@@ -573,7 +642,35 @@ function bindEvents() {
         renderCurrentRoom();
     });
     document.getElementById("btn-apikey").addEventListener("click", openApiKeyModal);
-    document.getElementById("room-search").addEventListener("input", (e) => renderRoomList(e.target.value));
+    const searchInput = document.getElementById("room-search");
+    const searchClear = document.getElementById("room-search-clear");
+    searchInput.addEventListener("input", (e) => {
+        renderRoomList(e.target.value);
+        searchClear.style.display = e.target.value ? "" : "none";
+    });
+    searchClear.addEventListener("click", () => {
+        searchInput.value = "";
+        renderRoomList("");
+        searchClear.style.display = "none";
+        searchInput.focus();
+    });
+
+    // Universal modal close buttons
+    document.querySelectorAll("[data-modal-close]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const modal = btn.closest(".modal");
+            if (modal) modal.style.display = "none";
+        });
+    });
+    // Escape closes topmost modal
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        const openModals = Array.from(document.querySelectorAll(".modal")).filter(m => m.style.display !== "none");
+        if (openModals.length) {
+            openModals[openModals.length - 1].style.display = "none";
+            hideMentionPopup();
+        }
+    });
 
     bindRoomModal();
     bindRoleModal();
@@ -804,5 +901,6 @@ function bindApiKeyModal() {
         state.apiKey = document.getElementById("apikey-input").value.trim();
         saveState();
         document.getElementById("apikey-modal").style.display = "none";
+        updateApiKeyStatus();
     });
 }

@@ -3,54 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 群聊</title>
+    <title>AI 群聊 · Multi-Room Claude Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <div id="app">
-        <!-- Left: Room list (groups) -->
+    <div id="app" class="app">
+        <!-- ═══════════════ SIDEBAR ═══════════════ -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <h1>AI 群聊</h1>
-                <button id="btn-new-room" class="btn-icon" title="发起群聊">＋</button>
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-mark">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M4 5.5C4 4.67 4.67 4 5.5 4h13c.83 0 1.5.67 1.5 1.5v9c0 .83-.67 1.5-1.5 1.5H8l-4 4V5.5z" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <div class="sidebar-brand-text">
+                        <h1>AI 群聊</h1>
+                        <span>Multi-Room Claude</span>
+                    </div>
+                </div>
+                <button id="btn-new-room" class="btn-icon" title="发起群聊" aria-label="发起群聊">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                </button>
             </div>
+
             <div class="sidebar-search">
+                <svg class="sidebar-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <circle cx="11" cy="11" r="7"/>
+                    <path d="m20 20-3.5-3.5"/>
+                </svg>
                 <input id="room-search" type="text" placeholder="搜索群聊" />
+                <button id="room-search-clear" class="sidebar-search-clear" style="display:none" aria-label="清空搜索">×</button>
             </div>
+
             <div id="room-list" class="room-list"></div>
+            <div id="room-list-empty" class="room-list-empty" style="display:none">
+                <div class="room-list-empty-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                    </svg>
+                </div>
+                <div class="room-list-empty-title">还没有群聊</div>
+                <div class="room-list-empty-sub">点右上角「＋」拉一个群</div>
+            </div>
+
             <div class="sidebar-footer">
-                <button id="btn-apikey" class="btn btn-ghost btn-block">🔑 API Key</button>
+                <button id="btn-apikey" class="sidebar-footer-btn">
+                    <span class="sidebar-footer-icon sidebar-footer-icon-key">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 2l-2 2m-7.5 7.5A3.5 3.5 0 1 1 8.5 6 3.5 3.5 0 0 1 11.5 11.5z"/>
+                            <path d="M11.5 11.5 21 21"/>
+                        </svg>
+                    </span>
+                    <span class="sidebar-footer-text">API Key</span>
+                    <span id="apikey-status-dot" class="status-dot status-dot-pending" title="未配置 API Key"></span>
+                </button>
             </div>
         </aside>
 
-        <!-- Main chat area -->
+        <!-- ═══════════════ CHAT AREA ═══════════════ -->
         <main class="chat-area" id="chat-area">
-            <!-- Empty placeholder when no room selected -->
+            <!-- Empty placeholder -->
             <div id="chat-empty" class="chat-empty">
-                <div class="chat-empty-icon">💬</div>
+                <div class="chat-empty-illu">
+                    <div class="chat-empty-illu-bubble bubble-1">💡</div>
+                    <div class="chat-empty-illu-bubble bubble-2">⚙️</div>
+                    <div class="chat-empty-illu-bubble bubble-3">📚</div>
+                    <div class="chat-empty-illu-bubble bubble-4">🎯</div>
+                    <div class="chat-empty-illu-core">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                        </svg>
+                    </div>
+                </div>
                 <h2>发起一个群聊，开始聊吧</h2>
-                <p>点击左上角「＋」拉起一个群，邀请 AI 角色进群、写群公告，然后开聊。</p>
+                <p>点击左侧「＋」拉一个群，从通讯录挑几个 AI 角色进来，写好群公告，然后开聊。<br>不同群互相独立，记录本地保存。</p>
+                <button id="btn-empty-new-room" class="btn btn-primary chat-empty-action">＋ 发起群聊</button>
             </div>
 
-            <!-- Active room view (hidden until a room is selected) -->
+            <!-- Active room view -->
             <div id="chat-view" class="chat-view" style="display:none">
                 <header class="chat-header">
-                    <div class="chat-header-info">
-                        <h2 id="current-room-name">群名</h2>
-                        <div class="chat-header-meta">
-                            <span id="current-room-members">0 位成员</span>
-                            <button id="btn-announcement" class="btn-link">📢 群公告</button>
-                            <button id="btn-room-settings" class="btn-link">⚙ 设置</button>
-                            <button id="btn-clear-history" class="btn-link btn-link-danger">清空记录</button>
-                            <button id="btn-leave-room" class="btn-link btn-link-danger">退出群聊</button>
+                    <div class="chat-header-row">
+                        <div class="chat-header-title-block">
+                            <div id="current-room-avatar" class="chat-header-avatar">群</div>
+                            <div class="chat-header-text">
+                                <h2 id="current-room-name">群名</h2>
+                                <div class="chat-header-sub">
+                                    <span id="current-room-members" class="chat-header-members">0 位成员</span>
+                                    <span class="dot-sep">·</span>
+                                    <button id="btn-announcement" class="btn-link">
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8v18l-18-8z"/><path d="M11 11v9"/></svg>
+                                        群公告
+                                    </button>
+                                    <span class="dot-sep">·</span>
+                                    <button id="btn-room-settings" class="btn-link">
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+                                        设置
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-header-actions">
+                            <button id="btn-clear-history" class="btn-link btn-link-danger" title="清空本群聊天记录">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                清空记录
+                            </button>
+                            <button id="btn-leave-room" class="btn-link btn-link-danger" title="退出群聊">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+                                退出群聊
+                            </button>
                         </div>
                     </div>
                 </header>
 
+                <!-- Member strip -->
+                <div id="member-strip" class="member-strip"></div>
+
                 <!-- Announcement banner -->
                 <div id="announcement-banner" class="announcement-banner" style="display:none">
-                    <span class="announcement-label">📢 群公告</span>
-                    <span id="announcement-text" class="announcement-text"></span>
+                    <div class="announcement-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8v18l-18-8z"/><path d="M11 11v9"/></svg>
+                    </div>
+                    <div class="announcement-body">
+                        <div class="announcement-label">群公告</div>
+                        <div id="announcement-text" class="announcement-text"></div>
+                    </div>
+                    <button id="announcement-edit-btn" class="announcement-edit" title="编辑群公告">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                    </button>
                 </div>
 
                 <!-- Messages -->
@@ -64,81 +148,130 @@
                             rows="1"></textarea>
                         <div id="mention-popup" class="mention-popup" style="display:none"></div>
                     </div>
-                    <button id="btn-send" class="btn btn-primary">发送</button>
-                    <button id="btn-stop" class="btn btn-danger" style="display:none">停止</button>
+                    <div class="composer-actions">
+                        <button id="btn-send" class="btn btn-primary">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
+                            发送
+                        </button>
+                        <button id="btn-stop" class="btn btn-danger" style="display:none">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+                            停止
+                        </button>
+                    </div>
                 </div>
-                <div class="composer-footer">Powered by Anthropic · 多角色群聊</div>
+                <div class="composer-footer">
+                    <span class="composer-footer-brand">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.39 7.36H22l-5.81 4.22 2.22 7.42L12 16.78 5.59 21l2.22-7.42L2 9.36h7.61L12 2z"/></svg>
+                        Powered by Anthropic
+                    </span>
+                    <span class="dot-sep">·</span>
+                    <span>多角色群聊</span>
+                    <span class="dot-sep">·</span>
+                    <span id="composer-footer-status">就绪</span>
+                </div>
             </div>
         </main>
     </div>
 
+    <!-- ═══════════════ MODALS ═══════════════ -->
+
     <!-- New / edit room modal -->
     <div id="room-modal" class="modal" style="display:none">
         <div class="modal-content modal-content-wide">
-            <h3 id="room-modal-title">发起群聊</h3>
+            <div class="modal-header">
+                <h3 id="room-modal-title">发起群聊</h3>
+                <button class="modal-close" data-modal-close aria-label="关闭">×</button>
+            </div>
 
-            <label>群名
+            <div class="modal-section">
+                <label class="form-label">群名</label>
                 <input id="room-name" type="text" placeholder="如：代码评审小组">
-            </label>
+            </div>
 
-            <label>群公告（聊天开始前给所有 AI 角色的共同指令）
+            <div class="modal-section">
+                <label class="form-label">
+                    群公告
+                    <span class="form-label-hint">聊天开始前给所有 AI 角色的共同指令</span>
+                </label>
                 <textarea id="room-announcement" rows="4"
                     placeholder="例如：每轮最多 3 次模型间对话，最后必须给出最终结论；不要复述别人已经说过的话；用中文回答。"></textarea>
-            </label>
+            </div>
 
-            <label>补充规则（可选，附加在群公告之后）
+            <div class="modal-section">
+                <label class="form-label">
+                    补充规则
+                    <span class="form-label-hint">可选，附加在群公告之后</span>
+                </label>
                 <textarea id="room-rules" rows="3"
                     placeholder="例如：当涉及代码时 @代码手 应先确认需求。"></textarea>
-            </label>
+            </div>
 
             <div class="modal-section">
                 <div class="modal-section-header">
-                    <span>群成员（从通讯录中点选拉入群）</span>
-                    <button id="btn-add-member" class="btn btn-small">＋ 从通讯录添加</button>
+                    <label class="form-label form-label-inline">群成员</label>
+                    <button id="btn-add-member" class="btn btn-small btn-secondary">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                        从通讯录添加
+                    </button>
                 </div>
                 <div id="room-member-list" class="room-member-list"></div>
                 <div id="member-picker" class="member-picker" style="display:none">
                     <div class="member-picker-search">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                         <input id="member-picker-search" type="text" placeholder="搜索通讯录">
                     </div>
                     <div id="member-picker-list" class="member-picker-list"></div>
                 </div>
             </div>
 
-            <label class="custom-role-section">
-                <span>或者在群内直接创建新 AI 角色（不会保存到通讯录）</span>
-                <button id="btn-add-custom-role" class="btn btn-small">＋ 新建本群专属角色</button>
+            <div class="modal-section">
+                <div class="modal-section-header">
+                    <label class="form-label form-label-inline">本群专属角色</label>
+                    <button id="btn-add-custom-role" class="btn btn-small btn-secondary">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                        新建角色
+                    </button>
+                </div>
                 <div id="custom-role-list" class="custom-role-list"></div>
-            </label>
+                <div class="modal-hint">本群专属角色不会保存到通讯录，仅本群可见。</div>
+            </div>
 
             <div class="modal-actions">
-                <button id="room-cancel" class="btn btn-ghost">取消</button>
+                <button id="room-cancel" class="btn btn-ghost" data-modal-close>取消</button>
                 <button id="room-save" class="btn btn-primary">创建群聊</button>
             </div>
         </div>
     </div>
 
-    <!-- Quick role editor inside room modal -->
+    <!-- Role editor modal -->
     <div id="role-modal" class="modal" style="display:none">
         <div class="modal-content">
-            <h3 id="role-modal-title">角色设定</h3>
-            <label>名字
+            <div class="modal-header">
+                <h3 id="role-modal-title">角色设定</h3>
+                <button class="modal-close" data-modal-close aria-label="关闭">×</button>
+            </div>
+            <div class="modal-section">
+                <label class="form-label">名字</label>
                 <input id="role-name" type="text" placeholder="如：研究员">
-            </label>
-            <label>系统 prompt
+            </div>
+            <div class="modal-section">
+                <label class="form-label">系统 Prompt</label>
                 <textarea id="role-prompt" rows="6" placeholder="你是一位严谨的研究员，回答喜欢引用数据⋯"></textarea>
-            </label>
-            <label>模型
-                <select id="role-model">
-                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Haiku)</option>
-                    <option value="claude-sonnet-5">claude-sonnet-5 (Sonnet)</option>
-                    <option value="claude-opus-4-7">claude-opus-4-7 (Opus)</option>
-                    <option value="claude-opus-4-8">claude-opus-4-8 (Opus)</option>
-                    <option value="claude-fable-5">claude-fable-5 (Fable)</option>
-                </select>
-            </label>
+            </div>
+            <div class="modal-section">
+                <label class="form-label">模型</label>
+                <div class="model-select-wrap">
+                    <select id="role-model">
+                        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 · 快 · 便宜</option>
+                        <option value="claude-sonnet-5">claude-sonnet-5 · 均衡</option>
+                        <option value="claude-opus-4-7">claude-opus-4-7 · 推理强</option>
+                        <option value="claude-opus-4-8">claude-opus-4-8 · 推理强</option>
+                        <option value="claude-fable-5">claude-fable-5 · 创作</option>
+                    </select>
+                </div>
+            </div>
             <div class="modal-actions">
-                <button id="role-cancel" class="btn btn-ghost">取消</button>
+                <button id="role-cancel" class="btn btn-ghost" data-modal-close>取消</button>
                 <button id="role-save" class="btn btn-primary">保存</button>
             </div>
         </div>
@@ -147,11 +280,14 @@
     <!-- Announcement viewer modal -->
     <div id="announcement-modal" class="modal" style="display:none">
         <div class="modal-content">
-            <h3>群公告</h3>
+            <div class="modal-header">
+                <h3>群公告</h3>
+                <button class="modal-close" data-modal-close aria-label="关闭">×</button>
+            </div>
             <textarea id="announcement-view" rows="10" readonly
                 placeholder="（暂无群公告）"></textarea>
             <div class="modal-actions">
-                <button id="announcement-close" class="btn btn-ghost">关闭</button>
+                <button id="announcement-close" class="btn btn-ghost" data-modal-close>关闭</button>
                 <button id="announcement-edit" class="btn btn-primary">编辑</button>
             </div>
         </div>
@@ -160,11 +296,19 @@
     <!-- API key modal -->
     <div id="apikey-modal" class="modal" style="display:none">
         <div class="modal-content">
-            <h3>Anthropic API Key</h3>
-            <input id="apikey-input" type="password" placeholder="sk-ant-...">
-            <p class="modal-hint">Key 仅保存在浏览器 localStorage，不会上传到任何第三方。</p>
+            <div class="modal-header">
+                <h3>Anthropic API Key</h3>
+                <button class="modal-close" data-modal-close aria-label="关闭">×</button>
+            </div>
+            <div class="modal-section">
+                <input id="apikey-input" type="password" placeholder="sk-ant-...">
+                <p class="modal-hint">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Key 仅保存在浏览器 localStorage，不会上传到任何第三方。
+                </p>
+            </div>
             <div class="modal-actions">
-                <button id="apikey-cancel" class="btn btn-ghost">取消</button>
+                <button id="apikey-cancel" class="btn btn-ghost" data-modal-close>取消</button>
                 <button id="apikey-save" class="btn btn-primary">保存</button>
             </div>
         </div>
