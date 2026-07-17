@@ -553,8 +553,11 @@ function stripMarkdown(s) { return (s || "").replace(/[*`#>\-\[\]\(\)!]/g, "").r
 
 function escapeHtml(s) {
     return (s || "")
-        .replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">")
-        .replace(/"/g, """).replace(/'/g, "&#39;");
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
 }
 function cssEscape(s) { return (s || "").replace(/"/g, '\\"'); }
 
