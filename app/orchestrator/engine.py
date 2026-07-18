@@ -29,7 +29,7 @@ def _format_history(
 ) -> list[dict[str, Any]]:
     """Convert our internal Message list into Anthropic-API messages.
 
-    Each entry is wrapped with a `[name]: ` prefix inside the content so the
+    Each entry is wrapped with a `name: ` prefix inside the content so the
     model can tell who said what.  The system prompt is passed separately.
     """
     api_messages: list[dict[str, Any]] = []
@@ -146,8 +146,8 @@ def _build_system_prompt(room: RoomConfig, role: Role) -> str:
         role.system_prompt,
         "",
         "# 当前对话历史中的发言者",
-        "以下历史中每条消息带 [发言者名] 前缀，请辨认谁在说话。",
-        "回复时不要带 [你的名字] 前缀，系统会自动加上。",
+        "以下历史中每条消息以「发言者名: 内容」的形式呈现，请据此辨认谁在说话。",
+        "回复时不要带「你的名字: 」前缀，系统会自动补上。",
         "若想 @ 其他角色，请使用 @角色名 形式触发其发言。",
     ]
     return "\n".join(parts)
