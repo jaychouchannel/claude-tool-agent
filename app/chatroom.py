@@ -71,7 +71,11 @@ def _parse_history(body: dict[str, Any]) -> list[Message]:
 
 @router.post("/api/chatroom/send")
 async def chatroom_send(request: Request):
-    """Accept { message, room, history?, api_key? } and return an SSE stream."""
+    """Accept { message, room, history?, api_key? } and return an SSE stream.
+
+    API key resolution order: Authorization: Bearer <key> header → body.api_key
+    → ANTHROPIC_API_KEY env var.
+    """
     try:
         body = await request.json()
     except Exception:
@@ -86,7 +90,7 @@ async def chatroom_send(request: Request):
         return JSONResponse({"error": room}, status_code=400)
 
     history = _parse_history(body)
-    api_key = body.get("api_key") or get_default_api_key()
+    api_key = _extract_api_key(request, body)
 
     def event_stream():
         for event_name, payload in orchestrate(room=room, history=history, user_msg=user_msg, api_key=api_key):
@@ -100,3 +104,13 @@ async def chatroom_send(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _extract_api_key(request: Request, body: dict[str, Any]) -> str | None:
+    """Prefer Authorization: Bearer <key>; fall back to body.api_key for backward compat."""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        if token:
+            return token
+    return body.get("api_key") or get_default_api_key()
