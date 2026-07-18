@@ -16,11 +16,17 @@ from .mentions import parse_mentions, strip_mention_prefix
 from .room import Message, Role, RoomConfig
 
 _MAX_TURNS = 20
+_TOKEN_BUDGET = 190_000  # tokens reserved for history (200K ctx – ~10K overhead)
 
 
 def _speaker_name(role_name: str) -> str:
     """Normalize a role name to a safe prefix string."""
     return role_name.strip()
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate (~3 chars/token, safe overestimate for CJK)."""
+    return len(text) // 3
 
 
 def _format_history(
@@ -29,14 +35,23 @@ def _format_history(
 ) -> list[dict[str, Any]]:
     """Convert our internal Message list into Anthropic-API messages.
 
-    Each entry is wrapped with a `[name]: ` prefix inside the content so the
+    Each entry is wrapped with a `name: ` prefix inside the content so the
     model can tell who said what.  The system prompt is passed separately.
+
+    Oldest messages are dropped to stay within the token budget.
     """
     api_messages: list[dict[str, Any]] = []
     for msg in history:
         prefix = _speaker_name(msg.name)
         text = f"{prefix}: {msg.content}"
         api_messages.append({"role": msg.role, "content": text})
+
+    # Trim from the front (preserve most recent) when over budget
+    total = sum(_estimate_tokens(m["content"]) for m in api_messages)
+    while total > _TOKEN_BUDGET and len(api_messages) > 1:
+        removed = api_messages.pop(0)
+        total -= _estimate_tokens(removed["content"])
+
     return api_messages
 
 
@@ -147,8 +162,8 @@ def _build_system_prompt(room: RoomConfig, role: Role) -> str:
         role.system_prompt,
         "",
         "# 当前对话历史中的发言者",
-        "以下历史中每条消息带 [发言者名] 前缀，请辨认谁在说话。",
-        "回复时不要带 [你的名字] 前缀，系统会自动加上。",
+        "以下历史中每条消息以「发言者名: 内容」的形式呈现，请据此辨认谁在说话。",
+        "回复时不要带「你的名字: 」前缀，系统会自动补上。",
         "若想 @ 其他角色，请使用 @角色名 形式触发其发言。",
     ]
     return "\n".join(parts)
