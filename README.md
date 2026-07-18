@@ -13,6 +13,7 @@
   <a href="#features">Features</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#usage">Usage</a>
+  <br /><b>Languages:</b> <a href="README.md">English (current)</a> · <a href="README.zh-CN.md">中文</a>
 </p>
 
 ---
