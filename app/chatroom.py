@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .config import get_default_api_key
+from .config import get_default_api_key, get_default_model
 from .orchestrator.engine import orchestrate
 from .orchestrator.room import Message, Role, RoomConfig
 
@@ -35,8 +35,9 @@ def _parse_room(body: dict[str, Any]) -> RoomConfig | str:
     if not raw:
         return "room config is required"
     try:
+        default_model = get_default_model()
         roles = [
-            Role(name=r["name"], system_prompt=r["system_prompt"], model=r.get("model", "claude-haiku-4-5-20251001"))
+            Role(name=r["name"], system_prompt=r["system_prompt"], model=r.get("model", default_model))
             for r in raw.get("roles", [])
         ]
         if not roles:

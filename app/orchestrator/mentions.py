@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import re
+
 from .room import Role
 
 
 def parse_mentions(text: str, roles: list[Role]) -> list[Role]:
-    """Extract roles mentioned via @name in text."""
+    """Extract roles mentioned via @name in text.
+
+    Uses word-boundary regex to avoid false substring matches, and
+    deduplicates so the same role is never yielded twice per message.
+    """
+    seen: set[str] = set()
     mentioned: list[Role] = []
     for role in roles:
-        if f"@{role.name}" in text:
+        if role.name in seen:
+            continue
+        if re.search(rf"@{re.escape(role.name)}(?=\W|$)", text):
             mentioned.append(role)
+            seen.add(role.name)
     return mentioned
 
 

@@ -56,6 +56,8 @@ def orchestrate(
         yield ("done", None)
         return
 
+    client = anthropic.Anthropic(api_key=key)
+
     history.append(Message(role="user", name="用户", content=user_msg))
 
     queue: list[Role] = _plan_speakers(room)
@@ -67,7 +69,7 @@ def orchestrate(
         turns += 1
 
         try:
-            yield from _stream_role(role, room, history, key)
+            yield from _stream_role(role, room, history, client)
         except anthropic.AuthenticationError as e:
             msg = f"{role.name}: API key is invalid — {e}"
             errors.append(msg)
@@ -108,7 +110,7 @@ def _stream_role(
     role: Role,
     room: RoomConfig,
     history: list[Message],
-    api_key: str,
+    client: anthropic.Anthropic,
 ) -> Generator[tuple[str, Any], None, None]:
     """Stream one role's full turn (Claude call → SSE events)."""
     system = _build_system_prompt(room, role)
@@ -116,24 +118,23 @@ def _stream_role(
 
     yield ("role_start", {"role": role.name})
 
-    client = anthropic.Anthropic(api_key=api_key)
     full_text = ""
-    with client.messages.stream(
-        model=role.model,
-        max_tokens=2048,
-        system=system,
-        messages=messages,
-    ) as stream:
-        for text in stream.text_stream:
-            full_text += text
-            yield ("text", {"role": role.name, "delta": text})
-
-    # Strip leading @mention the model may have prefixed
-    cleaned = strip_mention_prefix(full_text, room.roles)
-
-    history.append(Message(role="assistant", name=role.name, content=cleaned))
-
-    yield ("role_end", {"role": role.name})
+    try:
+        with client.messages.stream(
+            model=role.model,
+            max_tokens=2048,
+            system=system,
+            messages=messages,
+        ) as stream:
+            for text in stream.text_stream:
+                full_text += text
+                yield ("text", {"role": role.name, "delta": text})
+    finally:
+        # Strip leading @mention the model may have prefixed
+        cleaned = strip_mention_prefix(full_text, room.roles)
+        if cleaned:
+            history.append(Message(role="assistant", name=role.name, content=cleaned))
+        yield ("role_end", {"role": role.name})
 
 
 def _build_system_prompt(room: RoomConfig, role: Role) -> str:
