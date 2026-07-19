@@ -76,11 +76,13 @@ def orchestrate(
     history.append(Message(role="user", name="用户", content=user_msg))
 
     queue: list[Role] = _plan_speakers(room)
+    queued_names: set[str] = {r.name for r in queue}
     turns = 0
     errors: list[str] = []
 
     while queue and turns < _MAX_TURNS:
         role = queue.pop(0)
+        queued_names.discard(role.name)
         turns += 1
 
         try:
@@ -101,10 +103,16 @@ def orchestrate(
         if history:
             last = history[-1]
             mentioned = parse_mentions(last.content, room.roles)
-            # Don't re-queue the role that just spoke
+            # Don't re-queue the role that just spoke, and don't queue a role
+            # already pending — multiple @mentions of the same target before
+            # it speaks would otherwise waste redundant calls.
             for m in mentioned:
-                if m.name != role.name:
-                    queue.append(m)
+                if m.name == role.name:
+                    continue
+                if m.name in queued_names:
+                    continue
+                queue.append(m)
+                queued_names.add(m.name)
 
     if errors:
         yield ("error", {"message": f"{len(errors)} 个角色发言失败，已跳过"})
