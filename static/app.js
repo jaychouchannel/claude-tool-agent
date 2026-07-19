@@ -254,7 +254,10 @@ function appendAssistantMessage(roleName, initialText = "", streaming = false) {
         </div>
     `;
     wrap.appendChild(div);
-    if (streaming) state.activeStreamingBubbles.add(div);
+    if (streaming) {
+        state.activeStreamingBubbles.add(div);
+        state._bubbleCache.set(roleName, div);
+    }
     scrollToBottom();
     return div;
 }
@@ -278,7 +281,9 @@ function appendDeltaToBubble(roleName, delta) {
     }
     const accumulated = (bubble.dataset.raw || "") + delta;
     bubble.dataset.raw = accumulated;
-    bubble.querySelector(".bubble").innerHTML = renderMarkdown(accumulated);
+    const bubbleEl = bubble.querySelector(".bubble");
+    bubbleEl.classList.remove("bubble-typing");
+    bubbleEl.innerHTML = renderMarkdown(accumulated);
     state._bubbleCache.set(roleName, bubble);
     scrollToBottom();
 }
