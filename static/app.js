@@ -353,21 +353,24 @@ async function streamSSE(resp) {
         const { value, done } = await reader.read();
         if (done) break;
         buf += dec.decode(value, { stream: true });
-        const frames = buf.split("\n\n");
+        // Per SSE spec, frames are separated by a blank line. Tolerate \n\n
+        // (our backend), \r\n\r\n (some proxies), and mixed line endings.
+        const frames = buf.split(/\r?\n\r?\n/);
         buf = frames.pop();
         for (const frame of frames) parseSSEFrame(frame);
     }
+    if (buf.trim()) parseSSEFrame(buf);
 }
 
 function parseSSEFrame(frame) {
     let event = "message";
     let data = "";
-    for (const line of frame.split("\n")) {
+    for (const line of frame.split(/\r?\n/)) {
         if (!line) continue;
         if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data += line.slice(5).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).replace(/^\s/, "") + "\n";
     }
-    handleSSEEvent(event, data);
+    handleSSEEvent(event, data.replace(/\n$/, ""));
 }
 
 function handleSSEEvent(event, data) {
