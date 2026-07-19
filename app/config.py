@@ -1,11 +1,12 @@
 """Configuration: load .env, expose settings."""
 import os
+import warnings
 
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass
+    warnings.warn("python-dotenv not installed; .env file will NOT be loaded")
 
 
 def get_default_api_key() -> str | None:
