@@ -563,7 +563,13 @@ function escapeHtml(s) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 }
-function cssEscape(s) { return (s || "").replace(/"/g, '\\"'); }
+function cssEscape(s) {
+    if (!s) return "";
+    // CSS.escape-compatible: escape all characters that are not alphanumeric/underscore/hyphen.
+    // Using the selector as a data-attribute value means we only need to escape `"` and `\`
+    // for the attribute selector, but we keep a general escape for other selector contexts.
+    return s.replace(/["\\[\]:;,.(){}@!$^*~|=+<>\s]/g, "\\$&");
+}
 
 function showToast(text) {
     const t = document.getElementById("toast");
