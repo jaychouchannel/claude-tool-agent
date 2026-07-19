@@ -239,6 +239,7 @@ function appendAssistantMessage(roleName, initialText = "", streaming = false) {
     const div = document.createElement("div");
     div.className = "msg msg-assistant" + (streaming ? " streaming" : "");
     div.dataset.role = roleName;
+    const showPlaceholder = streaming && !initialText;
     div.innerHTML = `
         <div class="msg-avatar" style="background:${color}">${escapeHtml(initial)}</div>
         <div class="bubble-wrap">
@@ -246,7 +247,7 @@ function appendAssistantMessage(roleName, initialText = "", streaming = false) {
                 <span class="msg-author">${escapeHtml(roleName)}</span>
                 <span class="msg-role-tag">${escapeHtml(shortModel(room.roles[idx]?.model || ""))}</span>
             </div>
-            <div class="bubble">${renderMarkdown(initialText)}</div>
+            <div class="bubble${showPlaceholder ? " bubble-typing" : ""}">${showPlaceholder ? '<span class="typing-dots"><span></span><span></span><span></span></span>' : renderMarkdown(initialText)}</div>
         </div>
     `;
     wrap.appendChild(div);
