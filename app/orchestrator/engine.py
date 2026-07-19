@@ -6,6 +6,7 @@ yields SSE events so the frontend can stream each role's reply in turn.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Generator
 from typing import Any
 
@@ -147,11 +148,13 @@ def _stream_role(
 
     yield ("role_start", {"role": role.name})
 
+    max_tokens = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
+
     full_text = ""
     try:
         with client.messages.stream(
             model=role.model,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             system=system,
             messages=messages,
         ) as stream:
