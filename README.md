@@ -220,6 +220,7 @@ ANTHROPIC_API_KEY env var       ← set in shell or .env
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Anthropic API key; required if UI doesn't supply one |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Fallback model for roles that don't specify one |
+| `ANTHROPIC_MAX_TOKENS` | `4096` | Max output tokens per AI reply |
 
 Per-role model selection in the UI always wins over `ANTHROPIC_MODEL`.
 

@@ -39,6 +39,9 @@ const state = {
     editingRoomId: null,
     // Role modal scratchpad
     roleDraft: null,       // { idx?: number, target: 'member'|'custom'|'contact', name, system_prompt, model }
+
+    // Cache the last DOM node per role to avoid querySelectorAll on every delta
+    _bubbleCache: new Map(), // roleName → DOM element (.msg-assistant)
 };
 
 function newRoomId() {
@@ -239,6 +242,7 @@ function appendAssistantMessage(roleName, initialText = "", streaming = false) {
     const div = document.createElement("div");
     div.className = "msg msg-assistant" + (streaming ? " streaming" : "");
     div.dataset.role = roleName;
+    const showPlaceholder = streaming && !initialText;
     div.innerHTML = `
         <div class="msg-avatar" style="background:${color}">${escapeHtml(initial)}</div>
         <div class="bubble-wrap">
@@ -246,11 +250,14 @@ function appendAssistantMessage(roleName, initialText = "", streaming = false) {
                 <span class="msg-author">${escapeHtml(roleName)}</span>
                 <span class="msg-role-tag">${escapeHtml(shortModel(room.roles[idx]?.model || ""))}</span>
             </div>
-            <div class="bubble">${renderMarkdown(initialText)}</div>
+            <div class="bubble${showPlaceholder ? " bubble-typing" : ""}">${showPlaceholder ? '<span class="typing-dots"><span></span><span></span><span></span></span>' : renderMarkdown(initialText)}</div>
         </div>
     `;
     wrap.appendChild(div);
-    if (streaming) state.activeStreamingBubbles.add(div);
+    if (streaming) {
+        state.activeStreamingBubbles.add(div);
+        state._bubbleCache.set(roleName, div);
+    }
     scrollToBottom();
     return div;
 }
@@ -265,21 +272,30 @@ function appendErrorMessage(text) {
 }
 
 function appendDeltaToBubble(roleName, delta) {
-    const wrap = document.getElementById("messages");
-    const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
-    if (!bubbles.length) { appendAssistantMessage(roleName, delta, true); return; }
-    const bubble = bubbles[bubbles.length - 1];
+    let bubble = state._bubbleCache.get(roleName);
+    if (!bubble || !bubble.isConnected) {
+        const wrap = document.getElementById("messages");
+        const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
+        if (!bubbles.length) { appendAssistantMessage(roleName, delta, true); return; }
+        bubble = bubbles[bubbles.length - 1];
+    }
     const accumulated = (bubble.dataset.raw || "") + delta;
     bubble.dataset.raw = accumulated;
-    bubble.querySelector(".bubble").innerHTML = renderMarkdown(accumulated);
+    const bubbleEl = bubble.querySelector(".bubble");
+    bubbleEl.classList.remove("bubble-typing");
+    bubbleEl.innerHTML = renderMarkdown(accumulated);
+    state._bubbleCache.set(roleName, bubble);
     scrollToBottom();
 }
 
 function finalizeBubble(roleName) {
-    const wrap = document.getElementById("messages");
-    const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
-    if (!bubbles.length) return;
-    const bubble = bubbles[bubbles.length - 1];
+    let bubble = state._bubbleCache.get(roleName);
+    if (!bubble || !bubble.isConnected) {
+        const wrap = document.getElementById("messages");
+        const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
+        if (!bubbles.length) return;
+        bubble = bubbles[bubbles.length - 1];
+    }
     bubble.classList.remove("streaming");
     const text = bubble.dataset.raw || bubble.querySelector(".bubble").textContent;
     const room = currentRoom();
@@ -352,21 +368,24 @@ async function streamSSE(resp) {
         const { value, done } = await reader.read();
         if (done) break;
         buf += dec.decode(value, { stream: true });
-        const frames = buf.split("\n\n");
+        // Per SSE spec, frames are separated by a blank line. Tolerate \n\n
+        // (our backend), \r\n\r\n (some proxies), and mixed line endings.
+        const frames = buf.split(/\r?\n\r?\n/);
         buf = frames.pop();
         for (const frame of frames) parseSSEFrame(frame);
     }
+    if (buf.trim()) parseSSEFrame(buf);
 }
 
 function parseSSEFrame(frame) {
     let event = "message";
     let data = "";
-    for (const line of frame.split("\n")) {
+    for (const line of frame.split(/\r?\n/)) {
         if (!line) continue;
         if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data += line.slice(5).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).replace(/^\s/, "") + "\n";
     }
-    handleSSEEvent(event, data);
+    handleSSEEvent(event, data.replace(/\n$/, ""));
 }
 
 function handleSSEEvent(event, data) {
@@ -559,7 +578,13 @@ function escapeHtml(s) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 }
-function cssEscape(s) { return (s || "").replace(/"/g, '\\"'); }
+function cssEscape(s) {
+    if (!s) return "";
+    // CSS.escape-compatible: escape all characters that are not alphanumeric/underscore/hyphen.
+    // Using the selector as a data-attribute value means we only need to escape `"` and `\`
+    // for the attribute selector, but we keep a general escape for other selector contexts.
+    return s.replace(/["\\[\]:;,.(){}@!$^*~|=+<>\s]/g, "\\$&");
+}
 
 function showToast(text) {
     const t = document.getElementById("toast");

@@ -6,6 +6,7 @@ yields SSE events so the frontend can stream each role's reply in turn.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Generator
 from typing import Any
 
@@ -66,7 +67,9 @@ def _format_history(
     Each entry is wrapped with a `name: ` prefix inside the content so the
     model can tell who said what.  The system prompt is passed separately.
 
-    Oldest messages are dropped to stay within the token budget.
+    Oldest messages are dropped to stay within the token budget, but the
+    very first user message is always preserved — losing the opening
+    question derails the whole conversation.
     """
     api_messages: list[dict[str, Any]] = []
     for msg in history:
@@ -74,13 +77,17 @@ def _format_history(
         text = f"{prefix}: {msg.content}"
         api_messages.append({"role": msg.role, "content": text})
 
-    # Trim from the front (preserve most recent) when over budget
-    total = sum(_estimate_tokens(m["content"]) for m in api_messages)
-    while total > _TOKEN_BUDGET and len(api_messages) > 1:
-        removed = api_messages.pop(0)
-        total -= _estimate_tokens(removed["content"])
-
-    return api_messages
+    # Account for the system prompt too; it shares the same context window.
+    total = _estimate_tokens(system)
+    # Always keep the first message (the opening user prompt) — drop from
+    # index 1 onward when we need to trim.
+    if api_messages:
+        total += _estimate_tokens(api_messages[0]["content"])
+    drop_from = 1
+    while drop_from < len(api_messages) and total > _TOKEN_BUDGET:
+        total -= _estimate_tokens(api_messages[drop_from]["content"])
+        drop_from += 1
+    return api_messages[:1] + api_messages[drop_from:] if api_messages else []
 
 
 def orchestrate(
@@ -104,11 +111,13 @@ def orchestrate(
     history.append(Message(role="user", name="用户", content=user_msg))
 
     queue: list[Role] = _plan_speakers(room)
+    queued_names: set[str] = {r.name for r in queue}
     turns = 0
     errors: list[str] = []
 
     while queue and turns < _MAX_TURNS:
         role = queue.pop(0)
+        queued_names.discard(role.name)
         turns += 1
 
         try:
@@ -129,10 +138,16 @@ def orchestrate(
         if history:
             last = history[-1]
             mentioned = parse_mentions(last.content, room.roles)
-            # Don't re-queue the role that just spoke
+            # Don't re-queue the role that just spoke, and don't queue a role
+            # already pending — multiple @mentions of the same target before
+            # it speaks would otherwise waste redundant calls.
             for m in mentioned:
-                if m.name != role.name:
-                    queue.append(m)
+                if m.name == role.name:
+                    continue
+                if m.name in queued_names:
+                    continue
+                queue.append(m)
+                queued_names.add(m.name)
 
     if errors:
         yield ("error", {"message": f"{len(errors)} 个角色发言失败，已跳过"})
@@ -161,22 +176,37 @@ def _stream_role(
 
     yield ("role_start", {"role": role.name})
 
+    max_tokens = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
+
     full_text = ""
+    stream_error: str | None = None
     try:
         with client.messages.stream(
             model=role.model,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             system=system,
             messages=messages,
         ) as stream:
             for text in stream.text_stream:
                 full_text += text
                 yield ("text", {"role": role.name, "delta": text})
+    except anthropic.APIError:
+        # Defer to orchestrate()'s outer handler for Anthropic-origin errors
+        # (auth, rate limit, etc.) — those have dedicated messages there.
+        raise
+    except Exception as e:
+        # Catch non-Anthropic exceptions (network drops, timeouts, JSON
+        # decode errors) so the entire orchestrate generator doesn't die —
+        # other roles can still speak after this one fails.
+        stream_error = str(e)
     finally:
-        # Strip leading @mention the model may have prefixed
-        cleaned = strip_mention_prefix(full_text, room.roles)
-        if cleaned:
-            history.append(Message(role="assistant", name=role.name, content=cleaned))
+        if stream_error:
+            yield ("error", {"message": f"{role.name}: 流式响应异常 — {stream_error}"})
+        else:
+            # Strip leading @mention the model may have prefixed
+            cleaned = strip_mention_prefix(full_text, room.roles)
+            if cleaned:
+                history.append(Message(role="assistant", name=role.name, content=cleaned))
         yield ("role_end", {"role": role.name})
 
 
