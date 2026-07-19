@@ -39,6 +39,9 @@ const state = {
     editingRoomId: null,
     // Role modal scratchpad
     roleDraft: null,       // { idx?: number, target: 'member'|'custom'|'contact', name, system_prompt, model }
+
+    // Cache the last DOM node per role to avoid querySelectorAll on every delta
+    _bubbleCache: new Map(), // roleName → DOM element (.msg-assistant)
 };
 
 function newRoomId() {
@@ -266,21 +269,28 @@ function appendErrorMessage(text) {
 }
 
 function appendDeltaToBubble(roleName, delta) {
-    const wrap = document.getElementById("messages");
-    const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
-    if (!bubbles.length) { appendAssistantMessage(roleName, delta, true); return; }
-    const bubble = bubbles[bubbles.length - 1];
+    let bubble = state._bubbleCache.get(roleName);
+    if (!bubble || !bubble.isConnected) {
+        const wrap = document.getElementById("messages");
+        const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
+        if (!bubbles.length) { appendAssistantMessage(roleName, delta, true); return; }
+        bubble = bubbles[bubbles.length - 1];
+    }
     const accumulated = (bubble.dataset.raw || "") + delta;
     bubble.dataset.raw = accumulated;
     bubble.querySelector(".bubble").innerHTML = renderMarkdown(accumulated);
+    state._bubbleCache.set(roleName, bubble);
     scrollToBottom();
 }
 
 function finalizeBubble(roleName) {
-    const wrap = document.getElementById("messages");
-    const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
-    if (!bubbles.length) return;
-    const bubble = bubbles[bubbles.length - 1];
+    let bubble = state._bubbleCache.get(roleName);
+    if (!bubble || !bubble.isConnected) {
+        const wrap = document.getElementById("messages");
+        const bubbles = wrap.querySelectorAll(`.msg-assistant[data-role="${cssEscape(roleName)}"]`);
+        if (!bubbles.length) return;
+        bubble = bubbles[bubbles.length - 1];
+    }
     bubble.classList.remove("streaming");
     const text = bubble.dataset.raw || bubble.querySelector(".bubble").textContent;
     const room = currentRoom();
