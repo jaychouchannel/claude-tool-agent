@@ -9,6 +9,8 @@ import json
 from collections.abc import Generator
 from typing import Any
 
+import re
+
 import anthropic
 
 from ..config import get_default_api_key
@@ -18,6 +20,21 @@ from .room import Message, Role, RoomConfig
 _MAX_TURNS = 20
 _TOKEN_BUDGET = 190_000  # tokens reserved for history (200K ctx – ~10K overhead)
 
+# A character is "CJK" if it falls in any of the common Han/Hangul/Kana ranges.
+# Such characters typically tokenize to ~1-2 tokens each, whereas Latin text
+# averages ~4 chars/token. Treating CJK like ASCII (len // 3 or len // 4)
+# badly underestimates token counts, which risks overflowing the context window
+# in long Chinese conversations.
+_CJK_PATTERN = re.compile(
+    "["
+    "\U00004e00-\U00009fff"   # CJK Unified Ideographs
+    "\U00003400-\U00004dbf"   # CJK Extension A
+    "\U00003000-\U000030ff"   # Hiragana, Katakana, CJK symbols
+    "\U0000ac00-\U0000d7af"   # Hangul Syllables
+    "\U0000ff00-\U0000ffef"   # Fullwidth forms
+    "]"
+)
+
 
 def _speaker_name(role_name: str) -> str:
     """Normalize a role name to a safe prefix string."""
@@ -25,8 +42,19 @@ def _speaker_name(role_name: str) -> str:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate (~3 chars/token, safe overestimate for CJK)."""
-    return len(text) // 3
+    """Rough token estimate that accounts for CJK text.
+
+    CJK characters typically cost ~1.5 tokens each (between 1 and 2); Latin
+    characters average ~4 chars/token. We count CJK chars separately and
+    round up so the estimate stays a safe overestimate — better to drop
+    history a bit early than to overflow the 200K context window.
+    """
+    if not text:
+        return 0
+    cjk = len(_CJK_PATTERN.findall(text))
+    non_cjk = len(text) - cjk
+    # 1.5 tokens per CJK char (rounded up), 1 token per 3.5 Latin chars (slight over).
+    return (cjk * 3 + 1) // 2 + (non_cjk * 2 + 7) // 7
 
 
 def _format_history(
