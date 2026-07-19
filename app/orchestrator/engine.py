@@ -151,6 +151,7 @@ def _stream_role(
     max_tokens = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
 
     full_text = ""
+    stream_error: str | None = None
     try:
         with client.messages.stream(
             model=role.model,
@@ -161,11 +162,23 @@ def _stream_role(
             for text in stream.text_stream:
                 full_text += text
                 yield ("text", {"role": role.name, "delta": text})
+    except anthropic.APIError:
+        # Defer to orchestrate()'s outer handler for Anthropic-origin errors
+        # (auth, rate limit, etc.) — those have dedicated messages there.
+        raise
+    except Exception as e:
+        # Catch non-Anthropic exceptions (network drops, timeouts, JSON
+        # decode errors) so the entire orchestrate generator doesn't die —
+        # other roles can still speak after this one fails.
+        stream_error = str(e)
     finally:
-        # Strip leading @mention the model may have prefixed
-        cleaned = strip_mention_prefix(full_text, room.roles)
-        if cleaned:
-            history.append(Message(role="assistant", name=role.name, content=cleaned))
+        if stream_error:
+            yield ("error", {"message": f"{role.name}: 流式响应异常 — {stream_error}"})
+        else:
+            # Strip leading @mention the model may have prefixed
+            cleaned = strip_mention_prefix(full_text, room.roles)
+            if cleaned:
+                history.append(Message(role="assistant", name=role.name, content=cleaned))
         yield ("role_end", {"role": role.name})
 
 
