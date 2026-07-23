@@ -26,8 +26,10 @@ def _speaker_name(role_name: str) -> str:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate (~3 chars/token, safe overestimate for CJK)."""
-    return len(text) // 3
+    """Estimate tokens counting CJK at ~1.5 tokens/char, ASCII at ~0.25 tokens/char."""
+    cjk = sum(1 for c in text if '一' <= c <= '鿿' or '　' <= c <= '〿')
+    ascii_ = len(text) - cjk
+    return cjk * 2 + ascii_ // 4
 
 
 def _format_history(
@@ -51,10 +53,10 @@ def _format_history(
 
     # Account for the system prompt too; it shares the same context window.
     total = _estimate_tokens(system)
+    for msg in api_messages:
+        total += _estimate_tokens(msg["content"])
     # Always keep the first message (the opening user prompt) — drop from
     # index 1 onward when we need to trim.
-    if api_messages:
-        total += _estimate_tokens(api_messages[0]["content"])
     drop_from = 1
     while drop_from < len(api_messages) and total > _TOKEN_BUDGET:
         total -= _estimate_tokens(api_messages[drop_from]["content"])
@@ -80,8 +82,9 @@ def orchestrate(
 
     client = anthropic.Anthropic(api_key=key)
 
-    history.append(Message(role="user", name="用户", content=user_msg))
-
+    # The frontend already pushed the user message into `history` before
+    # POSTing, so don't append it again here — that would double the user
+    # turn and skew every subsequent speaker's context.
     queue: list[Role] = _plan_speakers(room)
     queued_names: set[str] = {r.name for r in queue}
     turns = 0

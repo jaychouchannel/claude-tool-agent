@@ -299,12 +299,13 @@ function finalizeBubble(roleName) {
     bubble.classList.remove("streaming");
     const text = bubble.dataset.raw || bubble.querySelector(".bubble").textContent;
     const room = currentRoom();
-    if (room) {
+    if (room && text) {
         room.history.push({ role: "assistant", name: roleName, content: text });
         saveState();
         renderRoomList();
     }
     state.activeStreamingBubbles.delete(bubble);
+    state._bubbleCache.delete(roleName);
 }
 
 /* ───── SSE send ───── */
@@ -402,8 +403,22 @@ function handleSSEEvent(event, data) {
 
 function stopStream() {
     if (state.currentStream) state.currentStream.abort();
-    state.activeStreamingBubbles.forEach(b => b.classList.remove("streaming"));
+    state.currentStream = null;
+    // Finalize any in-flight bubbles so partial output is preserved in history
+    // and the bubble cache is cleared of stale references.
+    const inFlight = new Set(state.activeStreamingBubbles);
     state.activeStreamingBubbles.clear();
+    for (const bubble of inFlight) {
+        const roleName = bubble.dataset.role;
+        bubble.classList.remove("streaming");
+        const text = bubble.dataset.raw || bubble.querySelector(".bubble")?.textContent || "";
+        const room = currentRoom();
+        if (room && text.trim()) {
+            room.history.push({ role: "assistant", name: roleName, content: text });
+        }
+        state._bubbleCache.delete(roleName);
+    }
+    if (currentRoom()) { saveState(); renderRoomList(); }
     setSending(false);
 }
 
@@ -611,9 +626,10 @@ function renderMarkdown(md) {
     text = text.replace(/^# (.+)$/gm, "<h1>$1</h1>");
     text = text.replace(/^---$/gm, "<hr>");
     text = text.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
-    text = text.replace(/^(\s*)[-*] (.+)$/gm, '<li>$2</li>');
-    text = text.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-    text = text.replace(/^(\s*)\d+\. (.+)$/gm, '<li>$2</li>');
+    // Unordered lists: group consecutive -/* lines under <ul>
+    text = text.replace(/(?:^[ \t]*[-*] .+(?:\n[ \t]*[-*] .+)*)/gm, m => '<ul>' + m.replace(/^[ \t]*[-*] (.+)$/gm, '<li>$1</li>') + '</ul>');
+    // Ordered lists: group consecutive "1. " lines under <ol>
+    text = text.replace(/(?:^[ \t]*\d+\. .+(?:\n[ \t]*\d+\. .+)*)/gm, m => '<ol>' + m.replace(/^[ \t]*\d+\. (.+)$/gm, '<li>$1</li>') + '</ol>');
     text = text.replace(/^((?:.+\|.+)\n)+$/gm, (block) => {
         const rows = block.trim().split("\n");
         if (rows.length < 2) return block;
