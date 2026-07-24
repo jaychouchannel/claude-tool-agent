@@ -161,7 +161,10 @@ function renderRoomList(filter = "") {
 
 function lastMessageTime(room) {
     if (!room.history.length) return 0;
-    return room.history.length; // simple proxy — newest last means most messages
+    // Use the per-room lastActivity timestamp when available, otherwise
+    // fall back to the last history entry's timestamp or createdAt.
+    if (room.lastActivity) return room.lastActivity;
+    return 0;
 }
 
 function switchRoom(roomId) {
@@ -301,6 +304,7 @@ function finalizeBubble(roleName) {
     const room = currentRoom();
     if (room && text) {
         room.history.push({ role: "assistant", name: roleName, content: text });
+        room.lastActivity = Date.now();
         saveState();
         renderRoomList();
     }
@@ -318,6 +322,7 @@ async function sendMessage(text) {
 
     appendUserMessage(text);
     room.history.push({ role: "user", name: "用户", content: text });
+    room.lastActivity = Date.now();
     saveState();
     renderRoomList();
 
@@ -415,6 +420,7 @@ function stopStream() {
         const room = currentRoom();
         if (room && text.trim()) {
             room.history.push({ role: "assistant", name: roleName, content: text });
+            room.lastActivity = Date.now();
         }
         state._bubbleCache.delete(roleName);
     }
@@ -612,20 +618,36 @@ function showToast(text) {
 function renderMarkdown(md) {
     let text = md || "";
     const codeBlocks = [];
+    const safeLinks = [];
     text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
         codeBlocks.push({ lang, code });
         return `CODE${codeBlocks.length - 1}`;
+    });
+    // Pull links out BEFORE escaping: extract URL, whitelist it, and stash a
+    // sentinel-wrapped placeholder so we can find it again after escapeHtml.
+    // Validation happens against raw URL chars (not entity-encoded versions) so
+    // " inside the URL can't break out of href after the browser decodes the
+    // entities. Whitelist also rejects anything that escapeHtml would touch,
+    // so the sanitized URL needs no further escaping when reinserted.
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, rawUrl) => {
+        const url = rawUrl.trim();
+        const i = safeLinks.length;
+        if (!/^https?:\/\/[A-Za-z0-9\-._~:\/?#@!$()*+,;=%\[\]]+$/.test(url)) {
+            safeLinks.push(null);
+        } else {
+            safeLinks.push(url);
+        }
+        return "\uE000L\uE000" + i + "\uE000" + label + "\uE000L\uE000";
     });
     text = escapeHtml(text);
     text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
     text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
-    text = text.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    text = text.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-    text = text.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-    text = text.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-    text = text.replace(/^---$/gm, "<hr>");
-    text = text.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
+    text = text.replace(/\uE000L(\d+)\uE000([\s\S]*?)\uE000L\uE000/g, (_, i, label) => {
+        const url = safeLinks[+i];
+        if (url === null) return label;
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    });
     // Unordered lists: group consecutive -/* lines under <ul>
     text = text.replace(/(?:^[ \t]*[-*] .+(?:\n[ \t]*[-*] .+)*)/gm, m => '<ul>' + m.replace(/^[ \t]*[-*] (.+)$/gm, '<li>$1</li>') + '</ul>');
     // Ordered lists: group consecutive "1. " lines under <ol>

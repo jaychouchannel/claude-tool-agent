@@ -56,7 +56,9 @@ def _format_history(
 
     Oldest messages are dropped to stay within the token budget, but the
     very first user message is always preserved — losing the opening
-    question derails the whole conversation.
+    question derails the whole conversation.  After trimming, the result is
+    forced to start with a user turn and to alternate strictly user/assistant
+    — Anthropic's API rejects consecutive same-role messages.
     """
     api_messages: list[dict[str, Any]] = []
     for msg in history:
@@ -74,7 +76,23 @@ def _format_history(
     while drop_from < len(api_messages) and total > _TOKEN_BUDGET:
         total -= _estimate_tokens(api_messages[drop_from]["content"])
         drop_from += 1
-    return api_messages[:1] + api_messages[drop_from:] if api_messages else []
+    trimmed = (api_messages[:1] + api_messages[drop_from:]) if api_messages else []
+
+    # Force the first message to be user — Anthropic's API rejects a leading
+    # assistant turn.  Trimming can drop enough leading user messages that an
+    # assistant message ends up first.
+    while trimmed and trimmed[0]["role"] != "user":
+        trimmed.pop(0)
+    # Collapse consecutive user messages into one (should be rare, but the API
+    # rejects them).  Multiple consecutive assistant messages are the normal
+    # multi-role pattern — keep them intact.
+    alternated: list[dict[str, Any]] = []
+    for msg in trimmed:
+        if alternated and alternated[-1]["role"] == "user" and msg["role"] == "user":
+            alternated[-1] = msg
+        else:
+            alternated.append(msg)
+    return alternated
 
 
 def orchestrate(
@@ -93,7 +111,10 @@ def orchestrate(
         yield ("done", None)
         return
 
-    client = anthropic.Anthropic(api_key=key)
+    client = anthropic.Anthropic(
+        api_key=key,
+        timeout=float(os.environ.get("ANTHROPIC_TIMEOUT", "120")),
+    )
 
     # The frontend already pushed the user message into `history` before
     # POSTing, so don't append it again here — that would double the user
@@ -168,16 +189,27 @@ def _stream_role(
 
     full_text = ""
     stream_error: str | None = None
+    stream_ctx = None
     try:
-        with client.messages.stream(
+        stream_ctx = client.messages.stream(
             model=role.model,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
-        ) as stream:
+        )
+        with stream_ctx as stream:
             for text in stream.text_stream:
                 full_text += text
                 yield ("text", {"role": role.name, "delta": text})
+    except GeneratorExit:
+        # Client disconnected — explicitly close the upstream stream so the
+        # Anthropic HTTP connection isn't left to drain tokens into the void.
+        if stream_ctx is not None:
+            try:
+                stream_ctx.close()
+            except Exception:
+                pass
+        raise
     except anthropic.APIError:
         # Defer to orchestrate()'s outer handler for Anthropic-origin errors
         # (auth, rate limit, etc.) — those have dedicated messages there.
