@@ -43,19 +43,6 @@ def _speaker_name(role_name: str) -> str:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate that accounts for CJK text.
-
-    CJK characters typically cost ~1.5 tokens each (between 1 and 2); Latin
-    characters average ~4 chars/token. We count CJK chars separately and
-    round up so the estimate stays a safe overestimate — better to drop
-    history a bit early than to overflow the 200K context window.
-    """
-    if not text:
-        return 0
-    cjk = len(_CJK_PATTERN.findall(text))
-    non_cjk = len(text) - cjk
-    # 1.5 tokens per CJK char (rounded up), 1 token per 3.5 Latin chars (slight over).
-    return (cjk * 3 + 1) // 2 + (non_cjk * 2 + 7) // 7
 
 
 def _format_history(
@@ -79,10 +66,10 @@ def _format_history(
 
     # Account for the system prompt too; it shares the same context window.
     total = _estimate_tokens(system)
+    for msg in api_messages:
+        total += _estimate_tokens(msg["content"])
     # Always keep the first message (the opening user prompt) — drop from
     # index 1 onward when we need to trim.
-    if api_messages:
-        total += _estimate_tokens(api_messages[0]["content"])
     drop_from = 1
     while drop_from < len(api_messages) and total > _TOKEN_BUDGET:
         total -= _estimate_tokens(api_messages[drop_from]["content"])
@@ -108,8 +95,9 @@ def orchestrate(
 
     client = anthropic.Anthropic(api_key=key)
 
-    history.append(Message(role="user", name="用户", content=user_msg))
-
+    # The frontend already pushed the user message into `history` before
+    # POSTing, so don't append it again here — that would double the user
+    # turn and skew every subsequent speaker's context.
     queue: list[Role] = _plan_speakers(room)
     queued_names: set[str] = {r.name for r in queue}
     turns = 0
