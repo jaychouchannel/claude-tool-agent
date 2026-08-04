@@ -1,9 +1,12 @@
 """POST /api/chatroom/send — SSE-streaming multi-role conversation."""
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from typing import Any
 
+import anthropic
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -13,11 +16,31 @@ from .orchestrator.room import Message, Role, RoomConfig
 
 router = APIRouter()
 
+# One Anthropic client per API key, shared across requests — the underlying
+# httpx connection pool is kept warm (`connection: keep-alive`) so concurrent
+# sends don't each tear down and reopen a fresh TCP socket. A different key
+# (per-request override) gets its own client so connection reuse never leaks
+# credentials across keys.
+_shared_client: anthropic.Anthropic | None = None
+_shared_client_key: str | None = None
+
+
+def _client_for(api_key: str | None) -> anthropic.Anthropic:
+    global _shared_client, _shared_client_key
+    key = api_key or get_default_api_key() or ""
+    if _shared_client is None or _shared_client_key != key:
+        _shared_client = anthropic.Anthropic(api_key=key, timeout=30.0)
+        _shared_client_key = key
+    return _shared_client
+
 
 def _serialize(event_name: str, payload: Any) -> str:
     """Translate one (event_name, payload) tuple into SSE wire format."""
     if event_name == "done":
-        return "event: done\ndata: null\n\n"
+        # json.dumps(None) yields the JSON literal "null", consistent with
+        # every other event. Rendering raw "null" was fragile — proxies/CDNs
+        # that chunk mid-frame could reconstruct a corrupted data line.
+        return f"event: done\ndata: {json.dumps(None)}\n\n"
     if event_name == "error":
         return f"event: error\ndata: {json.dumps({'message': payload['message']})}\n\n"
     if event_name == "role_start":
@@ -26,7 +49,12 @@ def _serialize(event_name: str, payload: Any) -> str:
         return f"event: role_end\ndata: {json.dumps({'role': payload['role']})}\n\n"
     if event_name == "text":
         return f"event: text\ndata: {json.dumps({'role': payload['role'], 'delta': payload['delta']})}\n\n"
-    return ""
+    if event_name == "ping":
+        # SSE comment frame — ignored by all clients and proxies.
+        # Used as a heartbeat so the async wrapper can detect client
+        # disconnects during slow first-token waits. Trailing blank line
+        # terminates the frame so the frontend splitter sees it complete.
+        return ":\n\n"
 
 
 def _parse_room(body: dict[str, Any]) -> RoomConfig | str:
@@ -93,9 +121,48 @@ async def chatroom_send(request: Request):
     history = _parse_history(body)
     api_key = _extract_api_key(request, body)
 
-    def event_stream():
-        for event_name, payload in orchestrate(room=room, history=history, user_msg=user_msg, api_key=api_key):
-            yield _serialize(event_name, payload)
+    async def event_stream():
+        # Run the (blocking, sync) orchestrate generator on a worker thread so
+        # its long evq.get() waits don't stall the event loop; bridge events
+        # back via an asyncio.Queue. Disconnect is observed on the loop and
+        # signals orchestrate's stop_event (issue #23).
+        loop = asyncio.get_running_loop()
+        aq: asyncio.Queue = asyncio.Queue()
+        stop_event = threading.Event()
+
+        def produce():
+            try:
+                for event_name, payload in orchestrate(
+                    room=room,
+                    history=history,
+                    user_msg=user_msg,
+                    api_key=api_key,
+                    client=_client_for(api_key),
+                    stop_event=stop_event,
+                ):
+                    loop.call_soon_threadsafe(aq.put_nowait, (event_name, payload))
+            except Exception as e:
+                loop.call_soon_threadsafe(aq.put_nowait, ("error", {"message": f"orchestrate crashed: {e}"}))
+            finally:
+                loop.call_soon_threadsafe(aq.put_nowait, ("__done__", None))
+
+        thread = threading.Thread(target=produce, daemon=True)
+        thread.start()
+
+        try:
+            while True:
+                event_name, payload = await aq.get()
+                if event_name == "__done__":
+                    break
+                if await request.is_disconnected():
+                    stop_event.set()
+                    yield _serialize(event_name, payload)
+                    break
+                yield _serialize(event_name, payload)
+        finally:
+            stop_event.set()
+            # Don't block shutdown on a wedged upstream call — leave the
+            # producer thread to wind down on its own.
 
     return StreamingResponse(
         event_stream(),

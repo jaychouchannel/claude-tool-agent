@@ -2,12 +2,21 @@
 
 Parses the room config, plans the speaker queue, calls Claude per role, and
 yields SSE events so the frontend can stream each role's reply in turn.
+
+Roles in the same round run in parallel via a thread pool so a slow role
+(e.g. a long Opus thought) doesn't block the rest of the group from
+streaming — other roles keep producing deltas while one stalls. Each worker
+threads events onto a shared queue; the main generator drains the queue in
+arrival order and yields outward. @mention chains still work: when a round
+finishes, parsed mentions are merged into the next round's speaker set.
 """
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor, Future
+from queue import Empty, Queue
+from threading import Event
 from typing import Any
 
 import re
@@ -20,6 +29,11 @@ from .room import Message, Role, RoomConfig
 
 _MAX_TURNS = 20
 _TOKEN_BUDGET = 190_000  # tokens reserved for history (200K ctx – ~10K overhead)
+_ROUND_WORKERS = 8  # cap parallel in-flight Claude calls per round
+
+# Sentinel pushed by each worker when its role finishes — lets the main
+# generator know how many workers are still draining events.
+_DONE_SENTINEL = ("__done__", None)
 
 # A character is "CJK" if it falls in any of the common Han/Hangul/Kana ranges.
 # Such characters typically tokenize to ~1-2 tokens each, whereas Latin text
@@ -43,6 +57,10 @@ def _speaker_name(role_name: str) -> str:
 
 
 def _estimate_tokens(text: str) -> int:
+    """Estimate tokens counting CJK at ~1.5 tokens/char, ASCII at ~0.25 tokens/char."""
+    cjk = len(_CJK_PATTERN.findall(text))
+    ascii_ = len(text) - cjk
+    return cjk * 2 + ascii_ // 4
 
 
 def _format_history(
@@ -100,10 +118,15 @@ def orchestrate(
     history: list[Message],
     user_msg: str,
     api_key: str | None = None,
+    client: anthropic.Anthropic | None = None,
+    stop_event: Event | None = None,
 ) -> Generator[tuple[str, Any], None, None]:
     """Run one user message through the multi-role room and yield SSE events.
 
-    Yielded tuples are (event_name, payload) — see the SSE protocol below.
+    Yielded tuples are (event_name, payload). ``client`` may be reused across
+    requests (connection pooling — see chatroom.py for the shared instance);
+    ``stop_event``, when set, aborts in-flight Claude calls promptly (used on
+    client disconnect).
     """
     key = api_key or get_default_api_key()
     if not key:
@@ -111,52 +134,86 @@ def orchestrate(
         yield ("done", None)
         return
 
-    client = anthropic.Anthropic(
-        api_key=key,
-        timeout=float(os.environ.get("ANTHROPIC_TIMEOUT", "120")),
-    )
+    if client is None:
+        client = anthropic.Anthropic(
+            api_key=key,
+            timeout=float(os.environ.get("ANTHROPIC_TIMEOUT", "120")),
+        )
+    if stop_event is None:
+        stop_event = Event()
 
-    # The frontend already pushed the user message into `history` before
-    # POSTing, so don't append it again here — that would double the user
-    # turn and skew every subsequent speaker's context.
-    queue: list[Role] = _plan_speakers(room)
-    queued_names: set[str] = {r.name for r in queue}
+    queued: list[Role] = _plan_speakers(room)
+    spoke: set[str] = {r.name for r in queued}
     turns = 0
     errors: list[str] = []
 
-    while queue and turns < _MAX_TURNS:
-        role = queue.pop(0)
-        queued_names.discard(role.name)
-        turns += 1
+    try:
+        while queued and turns < _MAX_TURNS and not stop_event.is_set():
+            round_roles = queued
+            queued = []
+            turns += len(round_roles)
 
-        try:
-            yield from _stream_role(role, room, history, client)
-        except anthropic.AuthenticationError as e:
-            msg = f"{role.name}: API key is invalid — {e}"
-            errors.append(msg)
-            yield ("error", {"message": msg})
-            continue
-        except anthropic.APIError as e:
-            msg = f"{role.name}: Claude API returned an error — {e}"
-            # Don't surface raw API errors in SSE to avoid leaking internals
-            errors.append(msg)
-            yield ("error", {"message": f"{role.name}: 模型调用失败，已跳过"})
-            continue
+            evq: Queue[tuple[str, Any]] = Queue()
+            with ThreadPoolExecutor(max_workers=min(len(round_roles), _ROUND_WORKERS)) as pool:
+                futures: dict[Future[list[Role]], str] = {
+                    pool.submit(_run_role, role, room, history, client, evq, stop_event): role.name
+                    for role in round_roles
+                }
+                # Drain shared event queue until every worker has pushed its
+                # done-sentinel. FIFO ordering guarantees a worker's text
+                # events are consumed before its sentinel. A bounded get()
+                # also yields periodic heartbeat frames during slow starts so
+                # the async SSE wrapper can observe client disconnects.
+                remaining = len(round_roles)
+                while remaining > 0:
+                    if stop_event.is_set():
+                        break
+                    try:
+                        event, payload = evq.get(timeout=2.0)
+                    except Empty:
+                        yield ("ping", None)
+                        continue
+                    if event == "__done__":
+                        remaining -= 1
+                        continue
+                    yield (event, payload)
 
-        # After the role has spoken, check if it @mentioned anyone
-        if history:
-            last = history[-1]
-            mentioned = parse_mentions(last.content, room.roles)
-            # Don't re-queue the role that just spoke, and don't queue a role
-            # already pending — multiple @mentions of the same target before
-            # it speaks would otherwise waste redundant calls.
-            for m in mentioned:
-                if m.name == role.name:
-                    continue
-                if m.name in queued_names:
-                    continue
-                queue.append(m)
-                queued_names.add(m.name)
+                # Workers may still be finishing even when stop fired — wait
+                # for them so we can collect mentions (and surface errors).
+                for fut in futures:
+                    try:
+                        mentioned = fut.result()
+                    except anthropic.AuthenticationError as e:
+                        msg = f"{futures[fut]}: API key is invalid — {e}"
+                        errors.append(msg)
+                        yield ("error", {"message": msg})
+                        continue
+                    except anthropic.APIError as e:
+                        msg = f"{futures[fut]}: Claude API returned an error — {e}"
+                        errors.append(msg)
+                        # Don't surface raw API errors in SSE to avoid leaking internals
+                        yield ("error", {"message": f"{futures[fut]}: 模型调用失败，已跳过"})
+                        continue
+                    except Exception as e:
+                        # Worker-level fallback (network, timeout, JSON decode).
+                        msg = f"{futures[fut]}: 流式响应异常 — {e}"
+                        errors.append(msg)
+                        yield ("error", {"message": msg})
+                        continue
+                    for m in mentioned:
+                        if m.name in spoke:
+                            continue
+                        queued.append(m)
+                        spoke.add(m.name)
+
+            if stop_event.is_set():
+                break
+    except Exception as e:
+        # Top-level safety net (issue #22): a surprise error in _plan_speakers,
+        # parse_mentions, system prompt construction, or the queue machinery
+        # must still terminate the SSE stream cleanly so the frontend doesn't
+        # hang waiting for more frames.
+        yield ("error", {"message": f"orchestrate failed: {e}"})
 
     if errors:
         yield ("error", {"message": f"{len(errors)} 个角色发言失败，已跳过"})
@@ -173,61 +230,73 @@ def _plan_speakers(room: RoomConfig) -> list[Role]:
     return list(room.roles)
 
 
-def _stream_role(
+def _run_role(
     role: Role,
     room: RoomConfig,
     history: list[Message],
     client: anthropic.Anthropic,
-) -> Generator[tuple[str, Any], None, None]:
-    """Stream one role's full turn (Claude call → SSE events)."""
-    system = _build_system_prompt(room, role)
-    messages = _format_history(history, system)
+    evq: Queue[tuple[str, Any]],
+    stop_event: Event,
+) -> list[Role]:
+    """Run one role's full Claude turn, pushing SSE events onto ``evq``.
 
-    yield ("role_start", {"role": role.name})
-
-    max_tokens = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
-
-    full_text = ""
-    stream_error: str | None = None
-    stream_ctx = None
+    Returns the list of roles this reply @mentioned (used to seed the next
+    round). Catches per-role exceptions and emits an error event instead of
+    propagating — the orchestrate generator translates them into per-role
+    SSE errors and the rest of the round continues.
+    """
     try:
-        stream_ctx = client.messages.stream(
-            model=role.model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-        )
-        with stream_ctx as stream:
-            for text in stream.text_stream:
-                full_text += text
-                yield ("text", {"role": role.name, "delta": text})
-    except GeneratorExit:
-        # Client disconnected — explicitly close the upstream stream so the
-        # Anthropic HTTP connection isn't left to drain tokens into the void.
-        if stream_ctx is not None:
-            try:
-                stream_ctx.close()
-            except Exception:
-                pass
-        raise
-    except anthropic.APIError:
-        # Defer to orchestrate()'s outer handler for Anthropic-origin errors
-        # (auth, rate limit, etc.) — those have dedicated messages there.
-        raise
-    except Exception as e:
-        # Catch non-Anthropic exceptions (network drops, timeouts, JSON
-        # decode errors) so the entire orchestrate generator doesn't die —
-        # other roles can still speak after this one fails.
-        stream_error = str(e)
+        system = _build_system_prompt(room, role)
+        messages = _format_history(history, system)
+        evq.put(("role_start", {"role": role.name}))
+
+        max_tokens = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
+        full_text = ""
+        stream_ctx = None
+        try:
+            stream_ctx = client.messages.stream(
+                model=role.model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=messages,
+            )
+            with stream_ctx as stream:
+                for text in stream.text_stream:
+                    if stop_event.is_set():
+                        # Drops the upstream stream promptly so we stop
+                        # consuming billed tokens nobody will read.
+                        break
+                    full_text += text
+                    evq.put(("text", {"role": role.name, "delta": text}))
+        except anthropic.APIError:
+            # Auth / rate limit / 5xx — let orchestrate distinguish via
+            # the future's exception. Re-raise so the typed handler there
+            # picks it up.
+            raise
+        except Exception as e:
+            # Network drops, timeouts, decode errors — surface as a
+            # per-role SSE error so the rest of the round keeps going.
+            evq.put(("error", {"message": f"{role.name}: 流式响应异常 — {e}"}))
+        finally:
+            if stream_ctx is not None:
+                try:
+                    stream_ctx.close()
+                except Exception:
+                    pass
+
+        cleaned = strip_mention_prefix(full_text, room.roles)
+        if cleaned:
+            history.append(Message(role="assistant", name=role.name, content=cleaned))
+
+        evq.put(("role_end", {"role": role.name}))
+
+        # Parse mentions from this reply only if it actually completed; an
+        # aborted/errored reply shouldn't queue more speakers.
+        if cleaned and not stop_event.is_set():
+            return parse_mentions(cleaned, room.roles)
+        return []
     finally:
-        if stream_error:
-            yield ("error", {"message": f"{role.name}: 流式响应异常 — {stream_error}"})
-        else:
-            # Strip leading @mention the model may have prefixed
-            cleaned = strip_mention_prefix(full_text, room.roles)
-            if cleaned:
-                history.append(Message(role="assistant", name=role.name, content=cleaned))
-        yield ("role_end", {"role": role.name})
+        evq.put(_DONE_SENTINEL)
 
 
 def _build_system_prompt(room: RoomConfig, role: Role) -> str:

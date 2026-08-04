@@ -59,6 +59,7 @@ function makeDefaultRoom() {
             { name: "审查员", system_prompt: "你是一位细致的代码审查员，每次必须挑出至少两个潜在问题，否则投票放弃方案。", model: "claude-opus-4-7" },
         ],
         history: [],
+        created_at: Date.now(),
     };
 }
 
@@ -160,11 +161,16 @@ function renderRoomList(filter = "") {
 }
 
 function lastMessageTime(room) {
-    if (!room.history.length) return 0;
-    // Use the per-room lastActivity timestamp when available, otherwise
-    // fall back to the last history entry's timestamp or createdAt.
+    // Prefer the real last-activity timestamp — captured at every history
+    // push site (sendMessage, finalizeBubble, stopStream). Rooms saved
+    // before lastActivity existed fall back to history length so they still
+    // order as "more recently touched" instead of sinking to the bottom.
     if (room.lastActivity) return room.lastActivity;
-    return 0;
+    if (room.history.length) return room.history.length;
+    // Empty rooms (no history, never spoken in) keep their creation order by
+    // sorting on created_at. Saved before this field existed → treat as 0,
+    // landing at the bottom of the sidebar.
+    return room.created_at || 0;
 }
 
 function switchRoom(roomId) {
@@ -388,9 +394,12 @@ function parseSSEFrame(frame) {
     let data = "";
     for (const line of frame.split(/\r?\n/)) {
         if (!line) continue;
+        // SSE comment frames (used as heartbeat) have no data — skip.
+        if (line.charAt(0) === ":") continue;
         if (line.startsWith("event:")) event = line.slice(6).trim();
         else if (line.startsWith("data:")) data += line.slice(5).replace(/^\s/, "") + "\n";
     }
+    if (event === "message" && !data) return;
     handleSSEEvent(event, data.replace(/\n$/, ""));
 }
 
@@ -833,6 +842,7 @@ function bindRoomModal() {
                 groupRules,
                 roles,
                 history: [],
+                created_at: Date.now(),
             };
             state.rooms.unshift(room);
             state.currentRoomId = room.id;
