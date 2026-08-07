@@ -43,6 +43,10 @@ def _speaker_name(role_name: str) -> str:
 
 
 def _estimate_tokens(text: str) -> int:
+    """Estimate tokens counting CJK at ~1.5 tokens/char, ASCII at ~0.25 tokens/char."""
+    cjk = len(_CJK_PATTERN.findall(text))
+    ascii_ = len(text) - cjk
+    return cjk * 2 + ascii_ // 4
 
 
 def _format_history(
@@ -54,27 +58,69 @@ def _format_history(
     Each entry is wrapped with a `name: ` prefix inside the content so the
     model can tell who said what.  The system prompt is passed separately.
 
+    Messages with empty content are dropped up front - trimming must not be
+    the only thing standing between them and the API (issue #17).
+
     Oldest messages are dropped to stay within the token budget, but the
-    very first user message is always preserved — losing the opening
-    question derails the whole conversation.
+    opening user prompt is preserved whenever the budget allows it - losing
+    the opening question derails the whole conversation.  Whatever survives
+    is normalized to the API's message rules: the first message must be a
+    user turn, and consecutive same-role messages are merged into one (the
+    API rejects both an assistant-first sequence and non-alternating roles).
     """
     api_messages: list[dict[str, Any]] = []
     for msg in history:
+        if not msg.content:
+            continue
         prefix = _speaker_name(msg.name)
         text = f"{prefix}: {msg.content}"
         api_messages.append({"role": msg.role, "content": text})
+
+    return _trim_history(api_messages, system)
+
+
+def _trim_history(
+    api_messages: list[dict[str, Any]],
+    system: str,
+) -> list[dict[str, Any]]:
+    """Trim messages to the token budget and normalize for the API."""
+    # The API rejects a leading assistant turn, so strip any up front -
+    # imported histories can start with assistant messages (issue #17). This
+    # runs before the budget math so doomed messages don't eat into the room
+    # available for real content.
+    while api_messages and api_messages[0]["role"] != "user":
+        api_messages.pop(0)
+    if not api_messages:
+        return []
 
     # Account for the system prompt too; it shares the same context window.
     total = _estimate_tokens(system)
     for msg in api_messages:
         total += _estimate_tokens(msg["content"])
-    # Always keep the first message (the opening user prompt) — drop from
-    # index 1 onward when we need to trim.
+
+    # Trim from the oldest messages, preserving the opening user prompt
+    # (index 0) whenever the budget allows it - losing the opening question
+    # derails the whole conversation. If even the anchor alone exceeds the
+    # budget, nothing usable remains.
     drop_from = 1
-    while drop_from < len(api_messages) and total > _TOKEN_BUDGET:
+    while total > _TOKEN_BUDGET and drop_from < len(api_messages):
         total -= _estimate_tokens(api_messages[drop_from]["content"])
         drop_from += 1
-    return api_messages[:1] + api_messages[drop_from:] if api_messages else []
+    if total > _TOKEN_BUDGET:
+        return []
+    trimmed = api_messages[:1] + api_messages[drop_from:]
+
+    # Merge consecutive same-role messages into one.  Consecutive assistants
+    # are the normal multi-role round shape and consecutive users appear when
+    # trimming splits a round; the API rejects both, so join their content -
+    # each line keeps its "name: " prefix, so speakers stay distinguishable.
+    merged: list[dict[str, Any]] = []
+    for msg in trimmed:
+        if merged and merged[-1]["role"] == msg["role"]:
+            merged[-1]["content"] += "\n\n" + msg["content"]
+        else:
+            merged.append(dict(msg))
+    return merged
 
 
 def orchestrate(
