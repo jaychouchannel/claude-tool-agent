@@ -16,7 +16,13 @@ def parse_mentions(text: str, roles: list[Role]) -> list[Role]:
     for role in roles:
         if role.name in seen:
             continue
-        if re.search(rf"@{re.escape(role.name)}(?=\W|$)", text):
+        # Use explicit punctuation/space/EOF boundary instead of \W,
+        # because Python 3 re treats CJK characters as \w, causing
+        # @{role.name} followed by CJK text to not match.
+        # Supported boundaries: whitespace, common CJK/ASCII punctuation,
+        # brackets, quotes, or end of string.
+        pattern = rf"@{re.escape(role.name)}(?=\s|[\u3000-\u303f\uFF00-\uFFEF,.\!?;:()\[\]{}\"']|$)"
+        if re.search(pattern, text):
             mentioned.append(role)
             seen.add(role.name)
     return mentioned
