@@ -66,7 +66,13 @@ def _parse_history(body: dict[str, Any]) -> list[Message]:
     raw = body.get("history") or []
     messages: list[Message] = []
     for h in raw:
-        messages.append(Message(role=h.get("role", "user"), name=h.get("name", "用户"), content=h.get("content", "")))
+        role = h.get("role", "user")
+        if role not in ("user", "assistant"):
+            # Anything else ("system", "tool", ...) is rejected by the
+            # Anthropic API and would 400 every later call mid-conversation;
+            # drop it instead of forwarding.
+            continue
+        messages.append(Message(role=role, name=h.get("name", "用户"), content=h.get("content", "")))
     return messages
 
 
