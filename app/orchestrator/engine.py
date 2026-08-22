@@ -10,8 +10,6 @@ import os
 from collections.abc import Generator
 from typing import Any
 
-import re
-
 import anthropic
 
 from ..config import get_default_api_key
@@ -21,32 +19,40 @@ from .room import Message, Role, RoomConfig
 _MAX_TURNS = 20
 _TOKEN_BUDGET = 190_000  # tokens reserved for history (200K ctx – ~10K overhead)
 
-# A character is "CJK" if it falls in any of the common Han/Hangul/Kana ranges.
-# Such characters typically tokenize to ~1-2 tokens each, whereas Latin text
-# averages ~4 chars/token. Treating CJK like ASCII (len // 3 or len // 4)
-# badly underestimates token counts, which risks overflowing the context window
-# in long Chinese conversations.
-_CJK_PATTERN = re.compile(
-    "["
-    "\U00004e00-\U00009fff"   # CJK Unified Ideographs
-    "\U00003400-\U00004dbf"   # CJK Extension A
-    "\U00003000-\U000030ff"   # Hiragana, Katakana, CJK symbols
-    "\U0000ac00-\U0000d7af"   # Hangul Syllables
-    "\U0000ff00-\U0000ffef"   # Fullwidth forms
-    "]"
-)
-
 
 def _speaker_name(role_name: str) -> str:
     """Normalize a role name to a safe prefix string."""
     return role_name.strip()
 
 
+def _max_tokens() -> int:
+    """Per-speaker output cap from ANTHROPIC_MAX_TOKENS.
+
+    A malformed value must not kill the whole SSE stream with an unhandled
+    ValueError mid-conversation, so fall back to the 4096 default and clamp
+    to at least 1.
+    """
+    raw = os.environ.get("ANTHROPIC_MAX_TOKENS")
+    if not raw:
+        return 4096
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 4096
+
+
 def _estimate_tokens(text: str) -> int:
-    """Estimate tokens counting CJK at ~1.5 tokens/char, ASCII at ~0.25 tokens/char."""
-    cjk = len(_CJK_PATTERN.findall(text))
-    ascii_ = len(text) - cjk
-    return cjk * 2 + ascii_ // 4
+    """Estimate tokens conservatively for the trimming budget.
+
+    Non-ASCII text — CJK but also emoji, Cyrillic, ... — tokenizes to ~1-2+
+    tokens per character, whereas ASCII averages ~4 chars/token. Counting
+    every non-ASCII character as ~2 tokens keeps long Chinese or emoji-rich
+    conversations from overflowing the context window; this estimate only
+    drives trimming, so erring high is always safe.
+    """
+    non_ascii = sum(1 for ch in text if not ch.isascii())
+    ascii_ = len(text) - non_ascii
+    return non_ascii * 2 + ascii_ // 4
 
 
 def _format_history(
@@ -210,7 +216,7 @@ def _stream_role(
 
     yield ("role_start", {"role": role.name})
 
-    max_tokens = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
+    max_tokens = _max_tokens()
 
     full_text = ""
     stream_error: str | None = None
