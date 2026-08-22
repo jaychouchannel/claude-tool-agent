@@ -154,6 +154,7 @@ def orchestrate(
         queued_names.discard(role.name)
         turns += 1
 
+        history_len_before = len(history)
         try:
             yield from _stream_role(role, room, history, client)
         except anthropic.AuthenticationError as e:
@@ -168,8 +169,13 @@ def orchestrate(
             yield ("error", {"message": f"{role.name}: 模型调用失败，已跳过"})
             continue
 
-        # After the role has spoken, check if it @mentioned anyone
-        if history:
+        # After the role has spoken, check if it @mentioned anyone. Only look
+        # at a freshly appended reply: when this turn produced no message
+        # (stream failure, or an empty / mention-only reply that strips to
+        # nothing), history[-1] is a stale earlier message and re-parsing it
+        # re-queues roles that already spoke — with mention-bearing user
+        # messages this ping-pongs until _MAX_TURNS, burning API calls.
+        if len(history) > history_len_before:
             last = history[-1]
             mentioned = parse_mentions(last.content, room.roles)
             # Don't re-queue the role that just spoke, and don't queue a role
