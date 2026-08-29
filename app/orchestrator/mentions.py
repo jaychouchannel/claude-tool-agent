@@ -36,11 +36,20 @@ def parse_mentions(text: str, roles: list[Role]) -> list[Role]:
     return mentioned
 
 
-def strip_mention_prefix(text: str, roles: list[Role]) -> str:
-    """Remove a leading @role prefix commonly inserted by models when they reply."""
+def strip_mention_prefix(text: str, roles: list[Role], speaker: str | None = None) -> str:
+    """Remove a leading @mention of the speaking role from its own reply.
+
+    Models commonly echo their own name ("@代码手: ..."), which would then
+    read as a self-mention in the history. A leading mention of a DIFFERENT
+    role must be kept: it is exactly the "@链式发言" signal the chaining loop
+    parses from the cleaned content, and stripping it silently breaks the
+    chain whenever a reply opens by addressing the next speaker.
+    """
     for role in roles:
         prefix = f"@{role.name}"
         if text.startswith(prefix):
-            text = text[len(prefix):].lstrip()
+            if speaker is not None and role.name != speaker:
+                break
+            text = text[len(prefix):].lstrip(" \u3000\t，,、。：:；;")
             break
     return text

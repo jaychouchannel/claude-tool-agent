@@ -237,8 +237,9 @@ def _stream_role(
         if stream_error:
             yield ("error", {"message": f"{role.name}: 流式响应异常 — {stream_error}"})
         else:
-            # Strip leading @mention the model may have prefixed
-            cleaned = strip_mention_prefix(full_text, room.roles)
+            # Strip only this role's own name echo; a leading mention of
+            # another role stays so the chaining loop below can see it.
+            cleaned = strip_mention_prefix(full_text, room.roles, speaker=role.name)
             if cleaned:
                 history.append(Message(role="assistant", name=role.name, content=cleaned))
         yield ("role_end", {"role": role.name})
