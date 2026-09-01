@@ -620,7 +620,16 @@ function renderMarkdown(md) {
     text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
     text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
-    text = text.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // Attribute-safe URL: percent-encode so the href value can never contain
+    // quotes or angle brackets, even if escapeHtml above is ever loosened.
+    text = text.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, (_, label, url) => {
+        const safe = url.trim()
+            .replace(/[\u0000-\u001f]+/g, "")
+            .replace(/\s+/g, "%20")
+            .replace(/&(quot|#39|apos|lt|gt);/gi, (m, e) => ({quot: "%22", "#39": "%27", apos: "%27", lt: "%3C", gt: "%3E"})[e.toLowerCase()])
+            .replace(/["'<>]/g, c => ({'"': "%22", "'": "%27", "<": "%3C", ">": "%3E"})[c]);
+        return `<a href="${safe}" target="_blank" rel="noopener">${label}</a>`;
+    });
     text = text.replace(/^### (.+)$/gm, "<h3>$1</h3>");
     text = text.replace(/^## (.+)$/gm, "<h2>$1</h2>");
     text = text.replace(/^# (.+)$/gm, "<h1>$1</h1>");
