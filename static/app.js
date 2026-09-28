@@ -617,9 +617,17 @@ function renderMarkdown(md) {
         return `CODE${codeBlocks.length - 1}`;
     });
     text = escapeHtml(text);
-    text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
-    text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+    // Asterisks inside inline code are neutralised so the emphasis passes below
+    // can never pair them with asterisks outside the code span.
+    text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${c.replace(/\*/g, "&#42;")}</code>`);
+    // Block-level lists are grouped before inline emphasis, so a leading "* "
+    // is consumed as a list marker instead of an emphasis delimiter.
+    text = text.replace(/(?:^[ \t]*[-*] .+(?:\n[ \t]*[-*] .+)*)/gm, m => '<ul>' + m.replace(/^[ \t]*[-*] (.+)$/gm, '<li>$1</li>') + '</ul>');
+    text = text.replace(/(?:^[ \t]*\d+\. .+(?:\n[ \t]*\d+\. .+)*)/gm, m => '<ol>' + m.replace(/^[ \t]*\d+\. (.+)$/gm, '<li>$1</li>') + '</ol>');
+    // Emphasis is matched per line: a stray "*" must never pair across a
+    // line break (or a tag boundary) and swallow the text in between.
+    text = text.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    text = text.replace(/(^|[^*\n])\*([^*\n]+)\*/g, "$1<em>$2</em>");
     // Attribute-safe URL: percent-encode so the href value can never contain
     // quotes or angle brackets, even if escapeHtml above is ever loosened.
     text = text.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, (_, label, url) => {
@@ -634,11 +642,8 @@ function renderMarkdown(md) {
     text = text.replace(/^## (.+)$/gm, "<h2>$1</h2>");
     text = text.replace(/^# (.+)$/gm, "<h1>$1</h1>");
     text = text.replace(/^---$/gm, "<hr>");
-    text = text.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
-    // Unordered lists: group consecutive -/* lines under <ul>
-    text = text.replace(/(?:^[ \t]*[-*] .+(?:\n[ \t]*[-*] .+)*)/gm, m => '<ul>' + m.replace(/^[ \t]*[-*] (.+)$/gm, '<li>$1</li>') + '</ul>');
-    // Ordered lists: group consecutive "1. " lines under <ol>
-    text = text.replace(/(?:^[ \t]*\d+\. .+(?:\n[ \t]*\d+\. .+)*)/gm, m => '<ol>' + m.replace(/^[ \t]*\d+\. (.+)$/gm, '<li>$1</li>') + '</ol>');
+    // Quote lines are matched after escapeHtml, so ">" arrives as "&gt;".
+    text = text.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
     text = text.replace(/^((?:.+\|.+)\n)+$/gm, (block) => {
         const rows = block.trim().split("\n");
         if (rows.length < 2) return block;
