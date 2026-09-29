@@ -622,7 +622,7 @@ function renderMarkdown(md) {
     text = text.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
     // Attribute-safe URL: percent-encode so the href value can never contain
     // quotes or angle brackets, even if escapeHtml above is ever loosened.
-    text = text.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, (_, label, url) => {
+    text = text.replace(/\[([^\]]+)\]\((https?:[^()]*(?:\([^()]*\)[^()]*)*)\)/g, (_, label, url) => {
         const safe = url.trim()
             .replace(/[\u0000-\u001f]+/g, "")
             .replace(/\s+/g, "%20")
